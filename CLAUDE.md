@@ -5,14 +5,14 @@ Guidance for Claude (and other contributors) working in this repository.
 ## What this is
 FLDigi Net Scheduler: a PySide6 desktop app (Windows/macOS/Linux) that retunes
 fldigi over XML-RPC on a weekly UTC schedule. Per entry it sets rig mode, dial
-frequency (sweet-spot shifted), modem and audio carrier. **It must never
+frequency (shifted for the sweet spot), modem and audio carrier. **It must never
 transmit**: never call `main.tx`, `main.tune`, `main.run_macro`,
 `text.add_tx*`, `wefax.send_file` or `navtex.send_message`.
 
 ## Layout
 - `sched_core.py`: Qt-free logic. Data model (`Entry`, `Settings`, `Document`),
   validation, UTC time math (`next_occurrence`, `due_entries`, `MinuteTracker`),
-  sweet spot math (`rig_sideband`, `plan_tuning`), JSON persistence and the
+  sweet spot math (`plan_tuning`), JSON persistence and the
   fldigi actions (`poll_status`, `fetch_lists`, `execute_entry`). Put all
   testable logic here.
 - `fldigi_net_scheduler.py`: GUI only. All XML-RPC calls go through `Worker`
@@ -50,16 +50,16 @@ Headless Qt: `QT_QPA_PLATFORM=offscreen`.
 - `rig.set_mode` only reaches the radio if fldigi has rig control (flrig,
   Hamlib or RigCAT).
 
-## Sweet spot semantics (agreed with the user, don't change silently)
-`Entry.sweet_spot_hz` is the net's audio frequency relative to its listed dial.
-The dial is shifted so the signal lands on the centre (`Settings.sweet_spot_base_hz`,
-default 1500), and the carrier is set to the centre:
-- USB: `dial = freq + (sweet - centre)`
-- LSB: `dial = freq - (sweet - centre)`
-- AM/FM/CW/FSK, or a blank frequency: dial as entered, carrier = sweet.
+## Sweet spot semantics (specified by the user, don't change silently)
+`Settings.sweet_spot_base_hz` is shown in the UI as **"FLDigi PSK Sweet Spot"**
+(default 1500). `Entry.sweet_spot_hz` is the row's sweet spot. One rule applies
+to every rig mode and sideband:
+- `dial = freq - (fldigi_psk_sweet_spot - row_sweet_spot)`
+- `carrier = fldigi_psk_sweet_spot`
+- Blank frequency: dial unchanged, carrier = row sweet spot.
 
-Example: 7110 kHz USB with sweet spot 900 gives the signal at 7110.900, dial
-7109.400, carrier 1500.
+Example: 7110 kHz with sweet spot 900 and FLDigi 1500 gives dial 7109.400 kHz,
+carrier 1500. The math is in `plan_tuning()`; keep the GUI tooltip using it too.
 
 ## Conventions
 - Times are entered in UTC (`HH:MM`). Days are evaluated in UTC.

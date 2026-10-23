@@ -358,44 +358,21 @@ def fetch_lists(host: str, port: int, timeout: float) -> tuple[list[str], list[s
     return rig_modes, names
 
 
-_NO_OFFSET_MODES = {"AM", "FM", "NFM", "WFM", "FMN", "AM-D", "FM-D", "CW", "CW-R", "CWR",
-                    "RTTY", "RTTY-R", "RTTYR", "FSK", "FSK-R"}
+def plan_tuning(freq_hz: Optional[float], sweet_hz: int,
+                fldigi_sweet_hz: int) -> tuple[Optional[float], int, str]:
+    """Dial and carrier for an entry.
 
-
-def rig_sideband(mode: str) -> Optional[str]:
-    """'USB', 'LSB', 'NONE' (AM/FM/CW/FSK: no audio-offset shift) or None (unknown)."""
-    m = (mode or "").upper().replace("_", "-").strip()
-    if not m or m == NO_CHANGE.upper():
-        return None
-    if m in _NO_OFFSET_MODES:
-        return "NONE"
-    if "LSB" in m or m in ("DIGL", "DATA-L", "PKT-L") or m.endswith("-L"):
-        return "LSB"
-    if "USB" in m or m in ("DIGU", "DATA-U", "PKT-U", "DATA") or m.endswith("-U"):
-        return "USB"
-    return None
-
-
-def plan_tuning(freq_hz: Optional[float], sweet_hz: int, centre_hz: int,
-                sideband: Optional[str]) -> tuple[Optional[float], int, str]:
-    """Where to put the dial and the fldigi carrier so the net's signal
-    (published dial + sweet spot audio) lands at our centre (1500 Hz).
-
-    USB: RF = dial + audio  ->  dial = freq + (sweet - centre)
-    LSB: RF = dial - audio  ->  dial = freq - (sweet - centre)
+    The dial sent to fldigi is the entered frequency reduced by
+    (fldigi PSK sweet spot - entry sweet spot), and fldigi's carrier is put on
+    its PSK sweet spot. Same rule for every rig mode / sideband.
+    Example: 7110 kHz, sweet spot 900, fldigi 1500 -> dial 7109.400 kHz.
     Returns (dial_hz or None, carrier_hz, explanation)."""
-    shift = int(sweet_hz) - int(centre_hz)
+    reduce_by = int(fldigi_sweet_hz) - int(sweet_hz)
     if freq_hz is None:
         return None, int(sweet_hz), "no frequency given: dial unchanged, carrier on the sweet spot"
-    if sideband == "USB":
-        return freq_hz + shift, int(centre_hz), (
-            f"signal at {(freq_hz + sweet_hz) / 1000:.3f} kHz RF (USB); dial "
-            f"{shift:+d} Hz so it sits at {centre_hz} Hz audio")
-    if sideband == "LSB":
-        return freq_hz - shift, int(centre_hz), (
-            f"signal at {(freq_hz - sweet_hz) / 1000:.3f} kHz RF (LSB); dial "
-            f"{-shift:+d} Hz so it sits at {centre_hz} Hz audio")
-    return freq_hz, int(sweet_hz), "no sideband offset for this mode: dial as entered, carrier on the sweet spot"
+    return freq_hz - reduce_by, int(fldigi_sweet_hz), (
+        f"{freq_hz / 1000:.3f} kHz − ({fldigi_sweet_hz} − {sweet_hz} Hz) = "
+        f"{(freq_hz - reduce_by) / 1000:.3f} kHz, carrier {fldigi_sweet_hz} Hz")
 
 
 def execute_entry(host: str, port: int, e: Entry, label: str, sweet_base: int,
@@ -429,21 +406,10 @@ def execute_entry(host: str, port: int, e: Entry, label: str, sweet_base: int,
             problems += 1
             log("error", f"  rig mode failed: {describe_error(ex)}")
 
-    # 2. Work out the sideband, then the dial and carrier
-    sideband = rig_sideband(e.rig_mode)
-    if sideband is None:
-        try:
-            sideband = rig_sideband(p.rig.get_mode())
-        except Exception:
-            sideband = None
-    if sideband is None:
-        try:
-            sideband = rig_sideband(p.main.get_wf_sideband())
-        except Exception:
-            sideband = None
+    # 2. Dial frequency, shifted for the sweet spot
     khz = parse_freq_khz(e.freq_khz)
     dial, carrier, why = plan_tuning(None if khz is None else float(round(khz * 1000)),
-                                     int(e.sweet_spot_hz), int(sweet_base), sideband)
+                                     int(e.sweet_spot_hz), int(sweet_base))
     log("info", f"  {why}")
     if dial is not None:
         try:

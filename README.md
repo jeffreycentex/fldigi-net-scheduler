@@ -20,8 +20,8 @@ the radio is up to you.
   mode, digital mode and sweet spot.
 - Day, rig mode and digital mode are dropdowns. Once connected, the mode
   lists are loaded from fldigi itself (`rig.get_modes`, `modem.get_names`).
-- Sideband-aware sweet spot handling: the dial is shifted so each net's
-  signal lands at 1500 Hz audio (details below).
+- Sweet spot handling: each net's dial is shifted by the difference between
+  its sweet spot and fldigi's PSK sweet spot (details below).
 - A built-in scheduler checks every UTC minute. If the app checks a few
   minutes late it catches up, but it does not replay a long gap after the
   computer sleeps.
@@ -63,7 +63,7 @@ add `--config PATH`.
 | Freq (kHz) | The net's listed dial frequency, e.g. `7110` or `14070.5`. Blank means don't change it |
 | Rig mode | Sent with `rig.set_mode`. `(no change)` skips this step |
 | Digital mode | fldigi modem name, sent with `modem.set_by_name`. `(no change)` skips this step |
-| Sweet spot (Hz) | The audio frequency the net's signal uses relative to its listed dial (default 1500) |
+| Sweet spot (Hz) | The net's sweet spot (default 1500, meaning no shift) |
 
 The day is evaluated in UTC because the start time is in UTC. For example, a
 Tuesday 01:00 UTC net is Monday evening in the Americas. The Local start
@@ -73,8 +73,8 @@ column shows this.
 
 1. **Rig mode** (`rig.set_mode`) goes first, because many radios move the
    VFO when the mode changes.
-2. **Dial frequency** (`main.set_frequency`), shifted for the sweet spot as
-   described below.
+2. **Dial frequency** (`main.set_frequency`), reduced by
+   (FLDigi PSK Sweet Spot − row sweet spot) as described below.
 3. **Modem** (`modem.set_by_name`). The app then polls `modem.get_name` to
    confirm the switch worked; some modes, such as OFDM, fail silently.
 4. **Carrier** (`modem.set_carrier`). This is always set, even if the modem
@@ -83,26 +83,24 @@ column shows this.
 
 ### Sweet spot math
 
-The net's signal sits at the listed dial plus (USB) or minus (LSB) the sweet
-spot audio frequency. The app moves the dial so that signal lands on the
-centre frequency (1500 Hz by default, set at the top of the window), and
-sets fldigi's carrier to that centre.
+The **FLDigi PSK Sweet Spot** field (top of the window, default 1500 Hz) is
+where fldigi's carrier is put. Each row's dial frequency is reduced by the
+difference between that and the row's sweet spot:
 
 ```
-USB:  dial = freq + (sweet - centre)
-LSB:  dial = freq - (sweet - centre)
+dial sent to fldigi = freq - (FLDigi PSK Sweet Spot - row sweet spot)
+carrier             = FLDigi PSK Sweet Spot
 ```
 
-| Example | Net's signal (RF) | Dial set to | Carrier |
-|---|---|---|---|
-| 7110 kHz USB, sweet spot 900 | 7110.900 | 7109.400 | 1500 |
-| 7110 kHz LSB, sweet spot 900 | 7109.100 | 7110.600 | 1500 |
+| Freq | Row sweet spot | FLDigi PSK Sweet Spot | Dial sent | Carrier |
+|---|---|---|---|---|
+| 7110 kHz | 900 Hz | 1500 Hz | 7109.400 kHz | 1500 Hz |
+| 7110 kHz | 1500 Hz | 1500 Hz | 7110.000 kHz | 1500 Hz |
+| 7110 kHz | 2000 Hz | 1500 Hz | 7110.500 kHz | 1500 Hz |
 
-For AM, FM, CW and FSK rig modes, or when the frequency is blank, the dial is
-left as entered and the carrier is set to the sweet spot. If the rig mode is
-`(no change)`, the sideband is read from fldigi (`rig.get_mode`, then
-`main.get_wf_sideband`). Hover over a Sweet spot cell to see the computed
-dial and carrier.
+The same rule applies to every rig mode. If the frequency is blank, the dial
+is left alone and the carrier is set to the row's sweet spot. Hover over a
+Sweet spot cell to see the computed dial.
 
 ## Where the schedule is saved
 

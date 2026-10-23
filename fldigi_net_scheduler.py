@@ -45,9 +45,9 @@ HEADER_TIPS = {
     COL_FREQ: "Dial (VFO) frequency in kHz, e.g. 7072 or 14070.5. Blank = don't change",
     COL_MODE: "Rig mode sent with rig.set_mode",
     COL_DIGI: "fldigi modem sent with modem.set_by_name",
-    COL_SWEET: ("Audio frequency the net's signal uses above (USB) or below (LSB) the listed dial. "
-                "The dial is shifted so that signal lands on the centre (1500 Hz). "
-                "Example: 7110 kHz USB, sweet spot 900 -> signal at 7110.900, dial 7109.400, carrier 1500"),
+    COL_SWEET: ("The net's sweet spot. The dial sent to fldigi is reduced by "
+                "(FLDigi PSK Sweet Spot - this value). "
+                "Example: 7110 kHz, sweet spot 900, FLDigi 1500 -> dial 7109.400 kHz, carrier 1500"),
 }
 LEVEL_COLORS = {"info": None, "ok": "#2e7d32", "warn": "#b26a00", "error": "#c62828"}
 INVALID_BG = QColor(255, 205, 205)
@@ -210,13 +210,14 @@ class MainWindow(QMainWindow):
         self.base_spin.setRange(300, 3000)
         self.base_spin.setSuffix(" Hz")
         self.base_spin.setValue(core.DEFAULT_SWEET_BASE)
-        self.base_spin.setToolTip("Audio centre you want every net to land on (fldigi carrier)")
+        self.base_spin.setToolTip("fldigi's PSK sweet spot. The carrier is set here and each row's "
+                                  "dial is reduced by (this - row sweet spot)")
         self.base_spin.valueChanged.connect(self._on_widget_changed)
         self.status_lbl = QLabel("● not connected")
         self.status_lbl.setTextFormat(Qt.TextFormat.RichText)
         self.status_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         for w in (QLabel("Host"), self.host_edit, QLabel("Port"), self.port_spin, self.connect_btn,
-                  QLabel("   Centre"), self.base_spin):
+                  QLabel("   FLDigi PSK Sweet Spot"), self.base_spin):
             cl.addWidget(w)
         cl.addSpacing(12)
         cl.addWidget(self.status_lbl, 1)
@@ -524,14 +525,10 @@ class MainWindow(QMainWindow):
 
     def _tuning_text(self, e: Entry) -> str:
         khz = core.parse_freq_khz(e.freq_khz)
-        sb = core.rig_sideband(e.rig_mode)
-        guess = ""
-        if sb is None:
-            sb, guess = "USB", " (sideband taken from fldigi at run time; USB shown)"
         dial, car, why = core.plan_tuning(None if khz is None else khz * 1000, e.sweet_spot_hz,
-                                          self.base_spin.value(), sb)
+                                          self.base_spin.value())
         d = f"dial {dial / 1000:.3f} kHz, " if dial is not None else ""
-        return f"{d}carrier {car} Hz - {why}{guess}"
+        return f"{d}carrier {car} Hz - {why}"
 
     def _mark_dirty(self, *_):
         if not self._loading:
