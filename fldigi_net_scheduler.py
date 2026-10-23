@@ -81,6 +81,26 @@ class NoWheelSpinBox(QSpinBox):
             ev.ignore()
 
 
+class CheckCell(QWidget):
+    """Centred QCheckBox used as a cell widget. A real widget behaves the same
+    on every row, including rows inserted later, on every platform."""
+    def __init__(self, checked=True, parent=None):
+        super().__init__(parent)
+        self.box = QCheckBox(self)
+        self.box.setChecked(checked)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.box, 0, Qt.AlignmentFlag.AlignCenter)
+
+    def isChecked(self) -> bool:
+        return self.box.isChecked()
+
+    def setChecked(self, on: bool):
+        self.box.blockSignals(True)
+        self.box.setChecked(on)
+        self.box.blockSignals(False)
+
+
 class RegexDelegate(QStyledItemDelegate):
     def __init__(self, pattern: str, placeholder: str, parent=None):
         super().__init__(parent)
@@ -277,7 +297,7 @@ class MainWindow(QMainWindow):
             COL_FREQ, RegexDelegate(r"^\d{0,7}([.,]\d{0,3})?$", "kHz", self.table))
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
-        for col, w in ((COL_ON, 36), (COL_DAY, 100), (COL_TIME, 80), (COL_LOCAL, 120),
+        for col, w in ((COL_ON, 40), (COL_DAY, 100), (COL_TIME, 80), (COL_LOCAL, 120),
                        (COL_FREQ, 100), (COL_MODE, 100), (COL_DIGI, 140), (COL_SWEET, 100)):
             self.table.setColumnWidth(col, w)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -330,11 +350,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ rows
     def _init_row(self, r: int):
         t = self.table
-        on = QTableWidgetItem()
-        on.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled |
-                    Qt.ItemFlag.ItemIsSelectable)
-        on.setCheckState(Qt.CheckState.Checked)
-        t.setItem(r, COL_ON, on)
+        holder = QTableWidgetItem("")   # keeps the cell selectable under the widget
+        holder.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        t.setItem(r, COL_ON, holder)
+        on = CheckCell(True)
+        on.box.toggled.connect(self._on_widget_changed)
+        t.setCellWidget(r, COL_ON, on)
         t.setItem(r, COL_NAME, QTableWidgetItem(""))
         t.setItem(r, COL_TIME, QTableWidgetItem(""))
         loc = QTableWidgetItem("")
@@ -370,7 +391,7 @@ class MainWindow(QMainWindow):
     def _get_row(self, r: int) -> Entry:
         t = self.table
         return Entry(
-            enabled=t.item(r, COL_ON).checkState() == Qt.CheckState.Checked,
+            enabled=t.cellWidget(r, COL_ON).isChecked(),
             name=t.item(r, COL_NAME).text().strip(),
             day=t.cellWidget(r, COL_DAY).currentText(),
             start_utc=t.item(r, COL_TIME).text().strip(),
@@ -385,7 +406,7 @@ class MainWindow(QMainWindow):
         was = self._loading
         self._loading = True
         try:
-            t.item(r, COL_ON).setCheckState(Qt.CheckState.Checked if e.enabled else Qt.CheckState.Unchecked)
+            t.cellWidget(r, COL_ON).setChecked(bool(e.enabled))
             t.item(r, COL_NAME).setText(e.name)
             t.item(r, COL_TIME).setText(core.normalize_time(e.start_utc) or e.start_utc)
             t.item(r, COL_FREQ).setText(e.freq_khz)
@@ -424,24 +445,24 @@ class MainWindow(QMainWindow):
             rows = [self.table.currentRow()]
         return rows
 
-    def _add_row(self):
-        r = self.table.rowCount()
+    def _new_row_at(self, r: int):
         self._loading = True
-        self.table.insertRow(r)
-        self._init_row(r)
-        self._loading = False
-        self.table.scrollToBottom()
+        try:
+            self.table.insertRow(r)
+            self._init_row(r)
+        finally:
+            self._loading = False
+        self._refresh_derived()
+        self.table.selectRow(r)
         self._mark_dirty()
+
+    def _add_row(self):
+        self._new_row_at(self.table.rowCount())
+        self.table.scrollToBottom()
 
     def _insert_row(self):
         rows = self._selected_rows()
-        r = rows[0] if rows else 0
-        self._loading = True
-        self.table.insertRow(r)
-        self._init_row(r)
-        self._loading = False
-        self._refresh_derived()
-        self._mark_dirty()
+        self._new_row_at(rows[0] if rows else 0)
 
     def _delete_rows(self):
         rows = self._selected_rows()
