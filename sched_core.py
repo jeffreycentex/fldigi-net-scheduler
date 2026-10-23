@@ -109,7 +109,7 @@ def day_matches(day: str, weekday: int) -> bool:
 
 @dataclass
 class Entry:
-    enabled: bool = True
+    enabled: bool = False          # new rows start Off
     name: str = ""
     day: str = "Mon"
     start_utc: str = ""

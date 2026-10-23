@@ -335,6 +335,7 @@ class MainWindow(QMainWindow):
         t.setItem(r, COL_ON, holder)
         on = NoWheelComboBox()
         on.addItems(["On", "Off"])
+        on.setCurrentText("Off")
         on.currentTextChanged.connect(self._on_widget_changed)
         t.setCellWidget(r, COL_ON, on)
         t.setItem(r, COL_NAME, QTableWidgetItem(""))
