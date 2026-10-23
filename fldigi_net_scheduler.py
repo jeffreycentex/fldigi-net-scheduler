@@ -38,7 +38,7 @@ APP_ID = "FLDigiNetScheduler"
 HEADERS = ["On", "Net / label", "Day (UTC)", "Start UTC", "Local start",
            "Freq (kHz)", "Rig mode", "Digital mode", "Sweet spot (Hz)"]
 HEADER_TIPS = {
-    COL_ON: "Unchecked rows are kept but never run by the scheduler",
+    COL_ON: "Rows set to Off are kept but never run by the scheduler",
     COL_DAY: "Day of the week in UTC (a 01:00 UTC Tuesday net is Monday evening in the Americas)",
     COL_TIME: "24-hour UTC, HH:MM (0100 and 1:00 are accepted)",
     COL_LOCAL: "Next start converted to this computer's time zone (read-only)",
@@ -79,26 +79,6 @@ class NoWheelSpinBox(QSpinBox):
             super().wheelEvent(ev)
         else:
             ev.ignore()
-
-
-class CheckCell(QWidget):
-    """Centred QCheckBox used as a cell widget. A real widget behaves the same
-    on every row, including rows inserted later, on every platform."""
-    def __init__(self, checked=True, parent=None):
-        super().__init__(parent)
-        self.box = QCheckBox(self)
-        self.box.setChecked(checked)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.box, 0, Qt.AlignmentFlag.AlignCenter)
-
-    def isChecked(self) -> bool:
-        return self.box.isChecked()
-
-    def setChecked(self, on: bool):
-        self.box.blockSignals(True)
-        self.box.setChecked(on)
-        self.box.blockSignals(False)
 
 
 class RegexDelegate(QStyledItemDelegate):
@@ -297,7 +277,7 @@ class MainWindow(QMainWindow):
             COL_FREQ, RegexDelegate(r"^\d{0,7}([.,]\d{0,3})?$", "kHz", self.table))
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
-        for col, w in ((COL_ON, 40), (COL_DAY, 100), (COL_TIME, 80), (COL_LOCAL, 120),
+        for col, w in ((COL_ON, 64), (COL_DAY, 100), (COL_TIME, 80), (COL_LOCAL, 120),
                        (COL_FREQ, 100), (COL_MODE, 100), (COL_DIGI, 140), (COL_SWEET, 100)):
             self.table.setColumnWidth(col, w)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -353,8 +333,9 @@ class MainWindow(QMainWindow):
         holder = QTableWidgetItem("")   # keeps the cell selectable under the widget
         holder.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         t.setItem(r, COL_ON, holder)
-        on = CheckCell(True)
-        on.box.toggled.connect(self._on_widget_changed)
+        on = NoWheelComboBox()
+        on.addItems(["On", "Off"])
+        on.currentTextChanged.connect(self._on_widget_changed)
         t.setCellWidget(r, COL_ON, on)
         t.setItem(r, COL_NAME, QTableWidgetItem(""))
         t.setItem(r, COL_TIME, QTableWidgetItem(""))
@@ -391,7 +372,7 @@ class MainWindow(QMainWindow):
     def _get_row(self, r: int) -> Entry:
         t = self.table
         return Entry(
-            enabled=t.cellWidget(r, COL_ON).isChecked(),
+            enabled=t.cellWidget(r, COL_ON).currentText() == "On",
             name=t.item(r, COL_NAME).text().strip(),
             day=t.cellWidget(r, COL_DAY).currentText(),
             start_utc=t.item(r, COL_TIME).text().strip(),
@@ -406,7 +387,10 @@ class MainWindow(QMainWindow):
         was = self._loading
         self._loading = True
         try:
-            t.cellWidget(r, COL_ON).setChecked(bool(e.enabled))
+            on = t.cellWidget(r, COL_ON)
+            on.blockSignals(True)
+            on.setCurrentText("On" if e.enabled else "Off")
+            on.blockSignals(False)
             t.item(r, COL_NAME).setText(e.name)
             t.item(r, COL_TIME).setText(core.normalize_time(e.start_utc) or e.start_utc)
             t.item(r, COL_FREQ).setText(e.freq_khz)

@@ -55,7 +55,7 @@ add `--config PATH`.
 
 | Column | Meaning |
 |---|---|
-| On | Unchecked rows are kept but never run |
+| On | `On` / `Off` dropdown; Off rows are kept but never run |
 | Net / label | Free text, shown in the log and the "Next" line |
 | Day (UTC) | `Daily`, `Weekdays`, `Weekends`, or `Mon`–`Sun`. Evaluated in **UTC** |
 | Start UTC | `HH:MM`, 24-hour. `0100` and `1:00` are also accepted |
