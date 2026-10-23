@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 jeffreycentex
 """Qt-free core for FLDigi Net Scheduler: schedule model, time math, JSON
 persistence and the fldigi XML-RPC actions. Imported by fldigi_net_scheduler.py.
 """

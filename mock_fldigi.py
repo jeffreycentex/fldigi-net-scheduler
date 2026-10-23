@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 jeffreycentex
 """Minimal fake fldigi XML-RPC server for testing FLDigi Net Scheduler
 without a radio. Mimics behaviour seen on fldigi 4.2.13:
   * modem.set_by_name to the current mode is a no-op

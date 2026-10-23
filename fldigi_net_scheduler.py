@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 jeffreycentex
 """FLDigi Net Scheduler - PySide6 GUI.
 
 Connects to fldigi's XML-RPC server, holds a weekly schedule of nets, and at
