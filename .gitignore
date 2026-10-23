@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.json.tmp
+*.json.bad-*
+build/
+dist/
+*.spec
+.DS_Store
