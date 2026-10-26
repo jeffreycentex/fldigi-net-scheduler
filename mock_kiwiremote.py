@@ -3,7 +3,7 @@
 # Copyright (C) 2026 jeffreycentex
 """Minimal fake KiwiRemote / Icom client API (v1) for testing FLDigi Net
 Scheduler without the real client. Implements /status, /connect,
-/disconnect, /record/start and /record/stop with the documented status
+/disconnect, /tune, /record/start and /record/stop with the documented status
 codes. Special servers for testing:
   busy.example     -> 503 busy
   fail.example     -> 502 connect_failed
@@ -93,6 +93,17 @@ class H(BaseHTTPRequestHandler):
                 stopped = rec_info(False)
                 S["rec"], S["state"], S["server"] = None, "idle", None
                 return self._send(200, {"ok": True, "recording_stopped": stopped})
+            if path == "/api/v1/tune":
+                tune = S.setdefault("tune", {"freq_hz": 0, "mode": "USB", "passband": 0})
+                if "freq_khz" in body:
+                    tune["freq_hz"] = int(float(body["freq_khz"]) * 1000)
+                if "freq_hz" in body:
+                    tune["freq_hz"] = int(body["freq_hz"])
+                if "mode" in body:
+                    if body["mode"] not in ("USB", "LSB", "AM", "PKTUSB", "PKTLSB", "SAM"):
+                        return self._err(400, "bad_request", f"bad mode {body['mode']}")
+                    tune["mode"] = {"PKTUSB": "USB", "PKTLSB": "LSB", "SAM": "AM"}.get(body["mode"], body["mode"])
+                return self._send(200, {"ok": True, "tune": tune})
             if path == "/api/v1/record/start":
                 if S["rec"]:
                     return self._err(409, "conflict", "already recording")

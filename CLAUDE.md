@@ -74,7 +74,11 @@ carrier 1500. The math is in `plan_tuning()`; keep the GUI tooltip using it too.
   runs at a time (they share audio and rigctl). Icom nets use SDR Off and only
   record.
 - Start order (`start_net`): end the previous active net, then `/connect`
-  (`wait` 15, `session_limit_min` = duration + 2), then the fldigi steps, then
+  (`wait` 15, `session_limit_min` = duration + 2), then `/tune` (`tune_client`:
+  the same shifted dial as fldigi, plus the rig mode mapped by `api_mode()` to
+  USB/LSB/AM/PKTUSB/PKTLSB/SAM; never the digital mode; skipped quietly if the
+  API isn't running), then the fldigi steps (which still send freq/mode via
+  rigctl for direct-to-radio use), then
   `/record/start` (`name` = net name without spaces + `_{date}T{time}`,
   `max_seconds` = duration*60 + 120). A 502 skips recording. 503/504 carry on.
   A 409 stops the client's existing recording and retries once.

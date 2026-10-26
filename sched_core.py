@@ -577,6 +577,14 @@ class KiwiApi:
     def disconnect(self):
         return self._call("POST", "/disconnect")
 
+    def tune(self, freq_hz: Optional[float] = None, mode: Optional[str] = None):
+        body = {}
+        if freq_hz is not None:
+            body["freq_hz"] = int(round(freq_hz))
+        if mode:
+            body["mode"] = mode
+        return self._call("POST", "/tune", body)
+
     def record_start(self, name: str, max_seconds: int):
         return self._call("POST", "/record/start", {"name": name, "max_seconds": max_seconds})
 
@@ -587,6 +595,46 @@ class KiwiApi:
 def api_error_text(r: dict) -> str:
     err = (r or {}).get("error") or {}
     return f"{err.get('code', '?')}: {err.get('message', '')}".strip()
+
+
+_API_MODES = {"USB": "USB", "LSB": "LSB", "AM": "AM", "SAM": "SAM",
+              "PKTUSB": "PKTUSB", "PKTLSB": "PKTLSB",
+              "USB-D": "USB", "DATA-U": "USB", "DIGU": "USB", "PKT-U": "USB", "DATA": "USB",
+              "LSB-D": "LSB", "DATA-L": "LSB", "DIGL": "LSB", "PKT-L": "LSB"}
+
+
+def api_mode(rig_mode: str) -> Optional[str]:
+    """Map a row's rig mode to one the client API's /tune accepts
+    (USB, LSB, AM, PKTUSB, PKTLSB, SAM), or None if it has no equivalent."""
+    return _API_MODES.get((rig_mode or "").upper().replace("_", "-").strip())
+
+
+def tune_client(api: KiwiApi, e: Entry, settings: Settings, log: Log) -> None:
+    """Send the row's dial frequency (sweet-spot shifted, the same value fldigi
+    gets) and rig mode to the client API. The digital mode stays with fldigi."""
+    khz = parse_freq_khz(e.freq_khz)
+    dial, _, _ = plan_tuning(None if khz is None else float(round(khz * 1000)),
+                             int(e.sweet_spot_hz), int(settings.sweet_spot_base_hz))
+    mode = None
+    if e.rig_mode and e.rig_mode != NO_CHANGE:
+        mode = api_mode(e.rig_mode)
+        if mode is None:
+            log("warn", f"  client: rig mode '{e.rig_mode}' has no API equivalent "
+                        f"(USB/LSB/AM); sending the frequency only")
+    if dial is None and mode is None:
+        return
+    try:
+        code, r = api.tune(dial, mode)
+    except ApiUnreachable:
+        log("info", "  client API not running: tuning through fldigi/rigctl only")
+        return
+    if r.get("ok"):
+        t = r.get("tune") or {}
+        f = t.get("freq_hz", dial)
+        log("ok", f"  client tuned → {f / 1000:.3f} kHz {t.get('mode', mode or '')}".rstrip()
+            if f is not None else f"  client mode → {t.get('mode', mode)}")
+    else:
+        log("warn", f"  client /tune failed: {api_error_text(r)}")
 
 
 def recording_name(net_name: str) -> str:
@@ -695,7 +743,9 @@ def start_net(api: KiwiApi, e: Entry, label: str, settings: Settings,
                 sdr_ok = False
                 log("error", f"  SDR: {ex}")
 
-    # 2. fldigi
+    # 2. Client API tune (if it is running), then fldigi, which also sends
+    #    the frequency and mode via rigctl for direct-to-radio setups
+    tune_client(api, e, settings, log)
     fldigi()
 
     # 3. Recording

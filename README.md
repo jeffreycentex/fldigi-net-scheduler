@@ -99,16 +99,22 @@ column shows this.
    password doesn't cut a longer net short. If the server is busy (503) or
    slow to answer (504), the client keeps retrying and the net carries on. If
    the connect fails outright (502), the net is not recorded.
-2. **Rig mode** (`rig.set_mode`) goes first, because many radios move the
-   VFO when the mode changes.
-3. **Dial frequency** (`main.set_frequency`), reduced by
+2. **Client tune** (if the client API is running): `POST /tune` with the same
+   dial frequency fldigi gets (sweet spot shift included) and the rig mode.
+   USB, LSB and AM are sent as they are; data modes such as USB-D or DATA-L
+   are sent as USB or LSB. Modes with no equivalent, such as CW or FM, send
+   the frequency only. The digital mode is only ever set in fldigi.
+3. **Rig mode** (`rig.set_mode`) goes before the frequency, because many
+   radios move the VFO when the mode changes. fldigi still sends the mode and
+   frequency through rigctl, so the same schedule works direct to a radio.
+4. **Dial frequency** (`main.set_frequency`), reduced by
    (FLDigi PSK Sweet Spot − row sweet spot) as described below.
-4. **Modem** (`modem.set_by_name`). The app then polls `modem.get_name` to
+5. **Modem** (`modem.set_by_name`). The app then polls `modem.get_name` to
    confirm the switch worked; some modes, such as OFDM, fail silently.
-5. **Carrier** (`modem.set_carrier`). This is always set, even if the modem
+6. **Carrier** (`modem.set_carrier`). This is always set, even if the modem
    was already active, because fldigi does not re-centre when the mode
    doesn't change.
-6. **Recording** (if Record is On): `POST /record/start` with the name
+7. **Recording** (if Record is On): `POST /record/start` with the name
    `<NetNameWithoutSpaces>_{date}T{time}`, for example
    `TexasDigitalNet_20261027T010000Z.wav` (date and time in UTC), and
    `max_seconds` = the duration plus 2 minutes. The client then stops the
@@ -196,7 +202,8 @@ behaviour seen on fldigi 4.2.13: mode switches are asynchronous, setting the
 current mode again does nothing, and OFDM modes fail to switch.
 
 `mock_kiwiremote.py` fakes the client API. The servers `busy.example`,
-`fail.example` and `slow.example` return 503, 502 and 504.
+`fail.example` and `slow.example` return 503, 502 and 504. It also accepts
+`/tune`.
 
 ```bash
 python3 mock_fldigi.py          # listens on 127.0.0.1:7362

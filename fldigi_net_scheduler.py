@@ -114,6 +114,7 @@ class SdrDialog(QDialog):
         form = QFormLayout()
         self.server = QLineEdit(server)
         self.server.setPlaceholderText("host:port, e.g. kiwi.example.net:8073")
+        self.server.setMinimumWidth(420)
         self.password = QLineEdit(password)
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setPlaceholderText("optional")
@@ -137,7 +138,7 @@ class SdrDialog(QDialog):
             {"default": self.r_def, "custom": self.r_cus}.get(mode, self.r_off).setChecked(True)
             self.group.idToggled.connect(lambda *_: self._sync())
             self._sync()
-        self.resize(460, self.sizeHint().height())
+        self.resize(max(600, self.sizeHint().width()), self.sizeHint().height())
 
     def _sync(self):
         on = self.default_only or self.r_cus.isChecked()
@@ -317,7 +318,7 @@ class MainWindow(QMainWindow):
         conn_box = QGroupBox("fldigi XML-RPC")
         cl = QHBoxLayout(conn_box)
         self.host_edit = QLineEdit(core.DEFAULT_HOST)
-        self.host_edit.setMaximumWidth(180)
+        self.host_edit.setMinimumWidth(200)
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(core.DEFAULT_PORT)
@@ -344,7 +345,7 @@ class MainWindow(QMainWindow):
         api_box = QGroupBox("SDR / recording client API (KiwiRemote or Icom client)")
         al = QHBoxLayout(api_box)
         self.api_host_edit = QLineEdit(core.DEFAULT_API_HOST)
-        self.api_host_edit.setMaximumWidth(180)
+        self.api_host_edit.setMinimumWidth(200)
         self.api_port_spin = QSpinBox()
         self.api_port_spin.setRange(1, 65535)
         self.api_port_spin.setValue(core.DEFAULT_API_PORT)
@@ -356,6 +357,7 @@ class MainWindow(QMainWindow):
             w.editingFinished.connect(self._on_api_changed)
         self.api_port_spin.valueChanged.connect(self._on_api_changed)
         self.default_sdr_btn = QPushButton("Default SDR…")
+        self.default_sdr_btn.setMinimumWidth(300)
         self.default_sdr_btn.clicked.connect(lambda *_: self._edit_default_sdr())
         self.kiwi_lbl = QLabel("● client API: not checked yet")
         self.kiwi_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -424,7 +426,7 @@ class MainWindow(QMainWindow):
         hh.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
         for col, w in ((COL_ON, 64), (COL_DAY, 100), (COL_TIME, 80), (COL_LOCAL, 110),
                        (COL_FREQ, 90), (COL_MODE, 100), (COL_DIGI, 130), (COL_SWEET, 95),
-                       (COL_SDR, 130), (COL_REC, 64), (COL_DUR, 90)):
+                       (COL_SDR, 230), (COL_REC, 64), (COL_DUR, 90)):
             self.table.setColumnWidth(col, w)
         self.table.verticalHeader().setDefaultSectionSize(ROW_H)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -466,7 +468,7 @@ class MainWindow(QMainWindow):
         v.addWidget(clock_box)
         v.addWidget(split, 1)
         self.setCentralWidget(central)
-        self.resize(1480, 820)
+        self.resize(1580, 840)
 
         # menu
         m = self.menuBar().addMenu("&File")
