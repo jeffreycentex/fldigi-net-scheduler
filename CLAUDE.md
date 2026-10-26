@@ -5,7 +5,9 @@ Guidance for Claude (and other contributors) working in this repository.
 ## What this is
 FLDigi Net Scheduler: a PySide6 desktop app (Windows/macOS/Linux) that retunes
 fldigi over XML-RPC on a weekly UTC schedule. Per entry it sets rig mode, dial
-frequency (shifted for the sweet spot), modem and audio carrier. **It must never
+frequency (shifted for the sweet spot), modem and audio carrier. Optionally it
+connects an SDR and records the net through the KiwiRemote / Icom client HTTP
+API, and ends both when the net's duration runs out. **It must never
 transmit**: never call `main.tx`, `main.tune`, `main.run_macro`,
 `text.add_tx*`, `wefax.send_file` or `navtex.send_message`.
 
@@ -13,12 +15,15 @@ transmit**: never call `main.tx`, `main.tune`, `main.run_macro`,
 - `sched_core.py`: Qt-free logic. Data model (`Entry`, `Settings`, `Document`),
   validation, UTC time math (`next_occurrence`, `due_entries`, `MinuteTracker`),
   sweet spot math (`plan_tuning`), JSON persistence and the
-  fldigi actions (`poll_status`, `fetch_lists`, `execute_entry`). Put all
-  testable logic here.
+  fldigi actions (`poll_status`, `fetch_lists`, `execute_entry`), the client
+  API (`KiwiApi`, `start_net`, `end_net`, `ActiveNet`, `recording_name`). Put
+  all testable logic here.
 - `fldigi_net_scheduler.py`: GUI only. All XML-RPC calls go through `Worker`
   (a single background thread). Results come back through `Bridge` Qt signals.
   Never call XML-RPC on the GUI thread.
 - `mock_fldigi.py`: fake fldigi server for tests and manual runs.
+- `mock_kiwiremote.py`: fake client API. `busy.`, `fail.` and `slow.` servers
+  return 503, 502 and 504.
 
 ## Run / test
 ```bash
@@ -61,8 +66,31 @@ to every rig mode and sideband:
 Example: 7110 kHz with sweet spot 900 and FLDigi 1500 gives dial 7109.400 kHz,
 carrier 1500. The math is in `plan_tuning()`; keep the GUI tooltip using it too.
 
+## KiwiRemote / Icom client API (spec: KiwiRemote's API.md, v1)
+- Base URL `http://<api_host>:<api_port>/api/v1` (default `127.0.0.1:7373`).
+  POSTs must send `Content-Type: application/json`, even with `{}`. Use the
+  optional token as `Authorization: Bearer`. `KiwiApi` bypasses proxies.
+- The Kiwi and Icom clients expose the same API on the same port, and only one
+  runs at a time (they share audio and rigctl). Icom nets use SDR Off and only
+  record.
+- Start order (`start_net`): end the previous active net, then `/connect`
+  (`wait` 15, `session_limit_min` = duration + 2), then the fldigi steps, then
+  `/record/start` (`name` = net name without spaces + `_{date}T{time}`,
+  `max_seconds` = duration*60 + 120). A 502 skips recording. 503/504 carry on.
+  A 409 stops the client's existing recording and retries once.
+- End (`end_net`): `/record/stop`, then `/disconnect` only if this net
+  connected the SDR. If the next net also connects an SDR, don't disconnect in
+  between, because a connect replaces the link.
+- The active net is persisted in `Settings.active_net` and ended by the GUI's
+  250 ms clock check (`_check_active`), so it survives restarts.
+- Per-row SDR: `sdr_mode` = `off` | `default` (uses
+  `Settings.default_sdr_server/password`) | `custom` (row's own). Passwords are
+  stored in plain JSON by the user's choice. Never log them.
+
 ## Conventions
 - Times are entered in UTC (`HH:MM`). Days are evaluated in UTC.
+- The grid starts with `MIN_ROWS` (2) rows and is sized for `VISIBLE_ROWS` (5)
+  before scrolling. Blank rows are not saved.
 - Bump `SCHEMA_VERSION` when the JSON shape changes, and migrate in
   `Entry.from_dict` / `Settings.from_dict`. Never break existing schedule files.
 - Saves are atomic (write `.tmp`, then `os.replace`). A corrupt file is

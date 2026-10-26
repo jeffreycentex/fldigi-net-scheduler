@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 jeffreycentex
 """Qt-free core for FLDigi Net Scheduler: schedule model, time math, JSON
-persistence and the fldigi XML-RPC actions. Imported by fldigi_net_scheduler.py.
+persistence, the fldigi XML-RPC actions and the KiwiRemote HTTP API client.
+Imported by fldigi_net_scheduler.py.
 """
 from __future__ import annotations
 
@@ -10,16 +11,25 @@ import os
 import re
 import socket
 import time
+import urllib.error
+import urllib.request
 import xmlrpc.client
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-SCHEMA_VERSION = 2
-MIN_ROWS = 30
+SCHEMA_VERSION = 3
+MIN_ROWS = 2
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 7362
 DEFAULT_SWEET_BASE = 1500
+DEFAULT_API_HOST = "127.0.0.1"
+DEFAULT_API_PORT = 7373
+DEFAULT_DURATION_MIN = 60
+MAX_DURATION_MIN = 24 * 60
+SDR_MODES = ("off", "default", "custom")
+RECORD_GRACE_S = 120          # recording/session safety margin past the net's end
+CONNECT_WAIT_S = 15
 
 DAYS = ["Daily", "Weekdays", "Weekends", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 NO_CHANGE = "(no change)"
@@ -117,11 +127,31 @@ class Entry:
     rig_mode: str = "USB"
     digital_mode: str = NO_CHANGE
     sweet_spot_hz: int = DEFAULT_SWEET_BASE   # net's audio offset above/below the dial
+    sdr_mode: str = "off"            # off | default | custom
+    sdr_server: str = ""             # used when sdr_mode == "custom"
+    sdr_password: str = ""
+    record: bool = False
+    duration_min: int = DEFAULT_DURATION_MIN
 
     def is_blank(self) -> bool:
         return not (self.name.strip() or self.start_utc.strip() or self.freq_khz.strip())
 
-    def problems(self) -> list[str]:
+    def uses_sdr(self) -> bool:
+        return self.sdr_mode in ("default", "custom")
+
+    def needs_end(self) -> bool:
+        """True if something must be stopped when the duration runs out."""
+        return self.uses_sdr() or self.record
+
+    def sdr_target(self, settings: Optional["Settings"]) -> Optional[tuple[str, str]]:
+        """(server, password) to connect to, or None."""
+        if self.sdr_mode == "custom":
+            return (self.sdr_server.strip(), self.sdr_password) if self.sdr_server.strip() else None
+        if self.sdr_mode == "default" and settings and settings.default_sdr_server.strip():
+            return settings.default_sdr_server.strip(), settings.default_sdr_password
+        return None
+
+    def problems(self, settings: Optional["Settings"] = None) -> list[str]:
         p = []
         if normalize_time(self.start_utc) is None:
             p.append("start time must be HH:MM (24 h UTC)")
@@ -131,10 +161,19 @@ class Entry:
             p.append(f"unknown day '{self.day}'")
         if not SWEET_MIN <= int(self.sweet_spot_hz) <= SWEET_MAX:
             p.append(f"sweet spot must be {SWEET_MIN}-{SWEET_MAX} Hz")
+        if self.sdr_mode not in SDR_MODES:
+            p.append(f"unknown SDR mode '{self.sdr_mode}'")
+        elif self.sdr_mode == "custom" and not self.sdr_server.strip():
+            p.append("SDR is set to Custom but has no server")
+        elif self.sdr_mode == "default" and settings is not None \
+                and not settings.default_sdr_server.strip():
+            p.append("SDR is set to Default but no default SDR server is configured")
+        if self.needs_end() and not 0 < int(self.duration_min) <= MAX_DURATION_MIN:
+            p.append(f"duration must be 1-{MAX_DURATION_MIN} min when SDR or Record is used")
         return p
 
-    def is_schedulable(self) -> bool:
-        return self.enabled and not self.is_blank() and not self.problems()
+    def is_schedulable(self, settings: Optional["Settings"] = None) -> bool:
+        return self.enabled and not self.is_blank() and not self.problems(settings)
 
     def label(self, row: int) -> str:
         return self.name.strip() or f"row {row + 1}"
@@ -156,6 +195,13 @@ class Entry:
             e.sweet_spot_hz = int(e.sweet_spot_hz)
         except (TypeError, ValueError):
             e.sweet_spot_hz = DEFAULT_SWEET_BASE
+        e.sdr_mode = str(e.sdr_mode).lower() if str(e.sdr_mode).lower() in SDR_MODES else "off"
+        e.sdr_server, e.sdr_password = str(e.sdr_server or ""), str(e.sdr_password or "")
+        e.record = bool(e.record)
+        try:
+            e.duration_min = max(0, min(MAX_DURATION_MIN, int(e.duration_min)))
+        except (TypeError, ValueError):
+            e.duration_min = DEFAULT_DURATION_MIN
         return e
 
 
@@ -169,6 +215,12 @@ class Settings:
     mode_switch_timeout_s: float = 4.0
     xmlrpc_timeout_s: float = 3.0
     window_geometry: str = ""
+    api_host: str = DEFAULT_API_HOST          # KiwiRemote / Icom client API
+    api_port: int = DEFAULT_API_PORT
+    api_token: str = ""
+    default_sdr_server: str = ""
+    default_sdr_password: str = ""
+    active_net: dict = field(default_factory=dict)   # net running now; survives restarts
 
     @classmethod
     def from_dict(cls, d: dict) -> "Settings":
@@ -258,12 +310,13 @@ def local_start_text(e: Entry, now: datetime) -> str:
     return loc.strftime("%a %H:%M")
 
 
-def due_entries(entries: list[Entry], minute: datetime) -> list[tuple[int, Entry]]:
+def due_entries(entries: list[Entry], minute: datetime,
+                settings: Optional[Settings] = None) -> list[tuple[int, Entry]]:
     """Entries whose start matches this UTC minute."""
     minute = minute.astimezone(timezone.utc)
     hhmm = minute.strftime("%H:%M")
     return [(i, e) for i, e in enumerate(entries)
-            if e.is_schedulable() and normalize_time(e.start_utc) == hhmm
+            if e.is_schedulable(settings) and normalize_time(e.start_utc) == hhmm
             and day_matches(e.day, minute.weekday())]
 
 
@@ -471,3 +524,224 @@ def execute_entry(host: str, port: int, e: Entry, label: str, sweet_base: int,
     else:
         log("ok", f"■ {label}: done")
     return problems == 0
+
+
+# ---------------------------------------------------------------- KiwiRemote / Icom client API
+
+class ApiUnreachable(Exception):
+    pass
+
+
+class KiwiApi:
+    """Client for the KiwiRemote (and Icom client) HTTP/JSON API v1.
+    Standard library only. Talks to localhost directly, never via a proxy."""
+
+    def __init__(self, host: str = DEFAULT_API_HOST, port: int = DEFAULT_API_PORT,
+                 token: str = "", timeout: float = 5.0):
+        self.base = f"http://{host}:{port}/api/v1"
+        self.token = token.strip()
+        self.timeout = timeout
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def _call(self, method: str, path: str, body: Optional[dict] = None,
+              timeout: Optional[float] = None) -> tuple[int, dict]:
+        data = None if method == "GET" else json.dumps(body or {}).encode("utf-8")
+        req = urllib.request.Request(self.base + path, data=data, method=method)
+        if method != "GET":
+            req.add_header("Content-Type", "application/json")
+        if self.token:
+            req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            with self._opener.open(req, timeout=timeout or self.timeout) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:      # 4xx/5xx still carry a JSON body
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except ValueError:
+                return e.code, {"ok": False, "error": {"code": "http_error", "message": str(e)}}
+        except (urllib.error.URLError, OSError, socket.timeout) as e:
+            reason = getattr(e, "reason", e)
+            raise ApiUnreachable(f"client API not reachable at {self.base} ({reason})") from e
+
+    def status(self):
+        return self._call("GET", "/status")
+
+    def connect(self, server: str, password: str = "", wait: float = CONNECT_WAIT_S,
+                session_limit_min: Optional[int] = None):
+        body = {"server": server, "password": password, "user": "fldigi-net-scheduler",
+                "wait": wait}
+        if session_limit_min is not None:
+            body["session_limit_min"] = session_limit_min
+        return self._call("POST", "/connect", body, timeout=wait + 10)
+
+    def disconnect(self):
+        return self._call("POST", "/disconnect")
+
+    def record_start(self, name: str, max_seconds: int):
+        return self._call("POST", "/record/start", {"name": name, "max_seconds": max_seconds})
+
+    def record_stop(self):
+        return self._call("POST", "/record/stop")
+
+
+def api_error_text(r: dict) -> str:
+    err = (r or {}).get("error") or {}
+    return f"{err.get('code', '?')}: {err.get('message', '')}".strip()
+
+
+def recording_name(net_name: str) -> str:
+    """Net name with spaces removed + the API's UTC date/time fields,
+    e.g. 'TexasDigitalNet_{date}T{time}' -> TexasDigitalNet_20261027T010000Z.wav"""
+    clean = re.sub(r"\s+", "", net_name or "")
+    clean = re.sub(r"[^A-Za-z0-9._+-]", "_", clean) or "net"
+    return f"{clean}_{{date}}T{{time}}"
+
+
+@dataclass
+class ActiveNet:
+    """A net that is running: what has to be undone when it ends."""
+    label: str
+    started_utc: str
+    end_utc: str
+    used_sdr: bool = False
+    server: str = ""
+    recording: bool = False
+    recording_path: str = ""
+
+    def end_dt(self) -> datetime:
+        return datetime.fromisoformat(self.end_utc)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Optional["ActiveNet"]:
+        try:
+            a = cls(**{k: d[k] for k in asdict(cls("", "", "")) if k in d})
+            a.end_dt()
+            return a if a.label or a.end_utc else None
+        except (TypeError, ValueError, KeyError):
+            return None
+
+
+def end_net(api: KiwiApi, a: ActiveNet, log: Log, reason: str = "duration ended") -> None:
+    """Stop the recording and, if this net connected the SDR, disconnect it."""
+    log("info", f"■ {a.label}: ending ({reason})")
+    try:
+        if a.recording:
+            code, r = api.record_stop()
+            rec = r.get("recording") or {}
+            if r.get("ok") and r.get("was_recording"):
+                log("ok", f"  recording stopped: {rec.get('path', '?')} "
+                          f"({rec.get('seconds', 0):.0f} s)")
+            elif r.get("ok"):
+                log("warn", "  recording was already stopped")
+            else:
+                log("error", f"  record/stop failed: {api_error_text(r)}")
+        if a.used_sdr:
+            code, r = api.disconnect()
+            if r.get("ok"):
+                log("ok", f"  SDR disconnected ({a.server})")
+            else:
+                log("error", f"  disconnect failed: {api_error_text(r)}")
+    except ApiUnreachable as e:
+        log("error", f"  {e}")
+
+
+def start_net(api: KiwiApi, e: Entry, label: str, settings: Settings,
+              fldigi: Callable[[], bool], log: Log,
+              previous: Optional[ActiveNet] = None,
+              now: Optional[datetime] = None) -> Optional[ActiveNet]:
+    """Full start of a net: end the previous one, connect the SDR, tune fldigi,
+    start recording. Returns the ActiveNet to end later, or None."""
+    now = now or utcnow()
+    target = e.sdr_target(settings)
+
+    # 0. A net still running is ended first. If the new net connects an SDR the
+    #    connect replaces the old link, so the old one isn't disconnected here.
+    if previous is not None:
+        prev = ActiveNet(**previous.to_dict())
+        if target is not None:
+            prev.used_sdr = False
+        end_net(api, prev, log, reason=f"{label} is starting")
+
+    used_sdr = False
+    sdr_ok = True
+    duration = int(e.duration_min)
+
+    # 1. SDR connect
+    if e.uses_sdr():
+        if target is None:
+            sdr_ok = False
+            log("error", "  SDR: no server configured (set the Default SDR or a custom one)")
+        else:
+            server, password = target
+            limit = duration + RECORD_GRACE_S // 60 if duration > 0 else None
+            log("info", f"  SDR: connecting to {server}"
+                        f"{' with password' if password else ''} (waiting up to {CONNECT_WAIT_S} s)")
+            try:
+                code, r = api.connect(server, password, CONNECT_WAIT_S, session_limit_min=limit)
+                used_sdr = True
+                if r.get("ok") and code == 200:
+                    log("ok", f"  SDR connected to {r.get('server') or server}")
+                elif code == 202 and r.get("ok"):
+                    log("ok", f"  SDR connect accepted for {server}")
+                elif code in (503, 504):
+                    log("warn", f"  SDR {api_error_text(r)} - the client keeps retrying")
+                else:
+                    sdr_ok = False
+                    log("error", f"  SDR connect failed: {api_error_text(r)}")
+            except ApiUnreachable as ex:
+                sdr_ok = False
+                log("error", f"  SDR: {ex}")
+
+    # 2. fldigi
+    fldigi()
+
+    # 3. Recording
+    recording, path = False, ""
+    if e.record:
+        if e.uses_sdr() and not sdr_ok:
+            log("error", "  recording not started: the SDR connection failed")
+        else:
+            name = recording_name(e.name or label)
+            max_s = duration * 60 + RECORD_GRACE_S
+            try:
+                code, r = api.record_start(name, max_s)
+                if code == 409:
+                    log("warn", "  a recording was already running in the client; stopping it")
+                    api.record_stop()
+                    code, r = api.record_start(name, max_s)
+                if r.get("ok"):
+                    recording = True
+                    path = (r.get("recording") or {}).get("path", "")
+                    log("ok", f"  recording to {path or name}")
+                else:
+                    log("error", f"  record/start failed: {api_error_text(r)}")
+            except ApiUnreachable as ex:
+                log("error", f"  recording: {ex}")
+
+    if not (used_sdr or recording):
+        return None
+    if duration <= 0:
+        log("warn", f"  {label}: no duration set, so nothing will stop it automatically")
+        return None
+    end = now + timedelta(minutes=duration)
+    a = ActiveNet(label=label, started_utc=now.isoformat(), end_utc=end.isoformat(),
+                  used_sdr=used_sdr, server=target[0] if (used_sdr and target) else "",
+                  recording=recording, recording_path=path)
+    log("info", f"  {label}: runs until {end:%H:%M} UTC")
+    return a
+
+
+def api_status_summary(api: KiwiApi) -> dict:
+    try:
+        code, r = api.status()
+    except ApiUnreachable as e:
+        return {"ok": False, "error": str(e)}
+    if not r.get("ok"):
+        return {"ok": False, "error": api_error_text(r)}
+    rec = r.get("recording") or {}
+    return {"ok": True, "state": r.get("state", "?"), "server": r.get("server") or "",
+            "recording": bool(rec.get("active")), "rec_seconds": rec.get("seconds") or 0,
+            "app_version": r.get("app_version", "")}

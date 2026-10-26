@@ -4,7 +4,9 @@ A cross-platform (Windows, macOS, Linux) desktop app that retunes
 [fldigi](http://www.w1hkj.org/) for scheduled digital nets. You keep a weekly
 schedule of nets in a grid. At each net's start time (UTC), the app uses
 fldigi's XML-RPC interface to set the rig mode, dial frequency, modem and
-audio carrier.
+audio carrier. It can also connect a KiwiSDR and record the net through the
+KiwiRemote (or Icom client) remote control API, and end both when the net's
+duration is up.
 
 **The app never transmits.** It only changes receive-side settings. Keying
 the radio is up to you.
@@ -15,9 +17,10 @@ the radio is up to you.
   port are editable, and a live status line shows the dial, rig mode, modem
   and carrier.
 - Local and UTC clocks, plus a countdown to the next scheduled net.
-- Schedule grid with 30 rows to start and room for more. Each row has:
-  on/off, label, day, start time (UTC), local start time, frequency, rig
-  mode, digital mode and sweet spot.
+- Schedule grid that starts with 2 rows and shows about 5 before scrolling.
+  Use Add row or Insert row for more. Each row has: on/off, label, day,
+  start time (UTC), local start time, frequency, rig mode, digital mode,
+  sweet spot, SDR, Record and Duration.
 - Day, rig mode and digital mode are dropdowns. Once connected, the mode
   lists are loaded from fldigi itself (`rig.get_modes`, `modem.get_names`).
 - Sweet spot handling: each net's dial is shifted by the difference between
@@ -27,7 +30,16 @@ the radio is up to you.
   computer sleeps.
 - The schedule and settings autosave to a JSON file. File › Open and Save As
   let you use other files.
-- "Run selected now" applies a row immediately, for testing.
+- **SDR:** each net can connect to a KiwiSDR server, with an optional
+  password, through the client API. Choose the saved Default SDR, a custom
+  server, or Off.
+- **Recording:** each net can record to WAV through the client API. The file
+  is named after the net, without spaces, plus the UTC date and time.
+- **Duration:** when it runs out, the recording stops and an SDR the net
+  connected is disconnected. A net still running when the next one starts is
+  ended first.
+- "Run selected now" starts the selected net immediately, including the SDR,
+  recording and duration. "Stop active net" ends the running net early.
 - Every step is verified against fldigi and logged (OK, warnings, errors).
 
 ## Requirements
@@ -37,7 +49,11 @@ the radio is up to you.
 - fldigi with XML-RPC enabled. It is on by default, port 7362. Tested
   against fldigi 4.2.13.
 - For rig mode and frequency changes, fldigi needs working rig control
-  (flrig, Hamlib or RigCAT).
+  (flrig, Hamlib or RigCAT). With KiwiRemote, that is its rigctld on port 4532.
+- For SDR and recording: KiwiRemote, or the Icom client, with its remote
+  control API turned on (default `127.0.0.1:7373`). Both use the same API on
+  the same port. Only one should run at a time, because they share the audio
+  and rigctl.
 
 ## Install and run
 
@@ -64,6 +80,9 @@ add `--config PATH`.
 | Rig mode | Sent with `rig.set_mode`. `(no change)` skips this step |
 | Digital mode | fldigi modem name, sent with `modem.set_by_name`. `(no change)` skips this step |
 | Sweet spot (Hz) | The net's sweet spot (default 1500, meaning no shift) |
+| SDR | Button that opens a dialog: **Off**, **Use the Default SDR**, or **Custom** server and password. Use Off with the Icom client |
+| Record | `On` / `Off` (default Off): record the net through the client API |
+| Duration | Minutes the net runs (default 60). Required when SDR or Record is used |
 
 The day is evaluated in UTC because the start time is in UTC. For example, a
 Tuesday 01:00 UTC net is Monday evening in the Americas. The Local start
@@ -71,15 +90,34 @@ column shows this.
 
 ## How a scheduled entry is applied
 
-1. **Rig mode** (`rig.set_mode`) goes first, because many radios move the
+0. **Previous net:** if a net is still running, its recording is stopped. Its
+   SDR is disconnected too, unless the new net connects an SDR of its own
+   (a new connect replaces the old link).
+1. **SDR** (if the row uses one): `POST /connect` with the server and
+   password, waiting up to 15 s. The session limit is set to the duration
+   plus 2 minutes, so the client's 45-minute limit for connections without a
+   password doesn't cut a longer net short. If the server is busy (503) or
+   slow to answer (504), the client keeps retrying and the net carries on. If
+   the connect fails outright (502), the net is not recorded.
+2. **Rig mode** (`rig.set_mode`) goes first, because many radios move the
    VFO when the mode changes.
-2. **Dial frequency** (`main.set_frequency`), reduced by
+3. **Dial frequency** (`main.set_frequency`), reduced by
    (FLDigi PSK Sweet Spot − row sweet spot) as described below.
-3. **Modem** (`modem.set_by_name`). The app then polls `modem.get_name` to
+4. **Modem** (`modem.set_by_name`). The app then polls `modem.get_name` to
    confirm the switch worked; some modes, such as OFDM, fail silently.
-4. **Carrier** (`modem.set_carrier`). This is always set, even if the modem
+5. **Carrier** (`modem.set_carrier`). This is always set, even if the modem
    was already active, because fldigi does not re-centre when the mode
    doesn't change.
+6. **Recording** (if Record is On): `POST /record/start` with the name
+   `<NetNameWithoutSpaces>_{date}T{time}`, for example
+   `TexasDigitalNet_20261027T010000Z.wav` (date and time in UTC), and
+   `max_seconds` = the duration plus 2 minutes. The client then stops the
+   recording itself even if this app is closed.
+
+**At the end of the duration:** `POST /record/stop`, then `POST /disconnect`
+if the net connected an SDR. The running net and its end time are saved in
+the schedule file, so a restart doesn't lose them. If the end time passed
+while the app was closed, the net is ended as soon as the app starts.
 
 ### Sweet spot math
 
@@ -102,6 +140,17 @@ The same rule applies to every rig mode. If the frequency is blank, the dial
 is left alone and the carrier is set to the row's sweet spot. Hover over a
 Sweet spot cell to see the computed dial.
 
+### SDR settings
+
+- **Default SDR…** (in the client API box) stores one server and password.
+  Rows set to *Use the Default SDR* follow it, so changing it updates all of
+  those rows.
+- A row set to *Custom* uses its own server and password.
+- Passwords are stored in plain text in the schedule file, and are never
+  written to the log.
+- A row is marked invalid (red cell) if it needs an SDR that isn't set up, or
+  if it uses SDR or Record without a duration.
+
 ## Where the schedule is saved
 
 The JSON file is autosaved on every edit. Its location depends on the
@@ -120,20 +169,25 @@ Example file:
 ```json
 {
   "app": "FLDigi Net Scheduler",
-  "schema_version": 2,
+  "schema_version": 3,
   "settings": { "host": "127.0.0.1", "port": 7362, "sweet_spot_base_hz": 1500,
                 "scheduler_enabled": true, "poll_interval_s": 5,
-                "mode_switch_timeout_s": 4.0, "xmlrpc_timeout_s": 3.0 },
+                "mode_switch_timeout_s": 4.0, "xmlrpc_timeout_s": 3.0,
+                "api_host": "127.0.0.1", "api_port": 7373, "api_token": "",
+                "default_sdr_server": "kiwi.example.net:8073",
+                "default_sdr_password": "", "active_net": {} },
   "entries": [
     { "enabled": true, "name": "Example 40m net", "day": "Tue", "start_utc": "01:00",
       "freq_khz": "7110", "rig_mode": "USB", "digital_mode": "THOR22",
-      "sweet_spot_hz": 900 }
+      "sweet_spot_hz": 900, "sdr_mode": "default", "sdr_server": "",
+      "sdr_password": "", "record": true, "duration_min": 90 }
   ]
 }
 ```
 
-Files from schema 1, which stored `sweet_spot_offset_hz`, are converted
-automatically when loaded.
+Older files are converted automatically when loaded. Schema 1 stored
+`sweet_spot_offset_hz`; rows from schema 2 get SDR Off, Record Off and a
+60-minute duration.
 
 ## Testing without a radio
 
@@ -141,8 +195,12 @@ automatically when loaded.
 behaviour seen on fldigi 4.2.13: mode switches are asynchronous, setting the
 current mode again does nothing, and OFDM modes fail to switch.
 
+`mock_kiwiremote.py` fakes the client API. The servers `busy.example`,
+`fail.example` and `slow.example` return 503, 502 and 504.
+
 ```bash
 python3 mock_fldigi.py          # listens on 127.0.0.1:7362
+python3 mock_kiwiremote.py      # listens on 127.0.0.1:7373
 python3 fldigi_net_scheduler.py # in another terminal
 ```
 
@@ -151,8 +209,9 @@ python3 fldigi_net_scheduler.py # in another terminal
 | File | Purpose |
 |---|---|
 | `fldigi_net_scheduler.py` | PySide6 GUI: grid, clocks, minute timer, background XML-RPC worker |
-| `sched_core.py` | Qt-free logic: data model, validation, UTC time math, JSON, fldigi actions |
+| `sched_core.py` | Qt-free logic: data model, validation, UTC time math, JSON, fldigi actions, client API, net start/end |
 | `mock_fldigi.py` | Fake fldigi server for testing |
+| `mock_kiwiremote.py` | Fake KiwiRemote / Icom client API for testing |
 
 ## Notes and limits
 
