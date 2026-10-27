@@ -70,13 +70,14 @@ def m_rig_set_mode(m):
     return None
 
 
-def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 7362
+class H(SimpleXMLRPCRequestHandler):
+    def log_message(self, *a):
+        pass
 
-    class H(SimpleXMLRPCRequestHandler):
-        def log_message(self, *a):
-            pass
 
+def make_server(port=7362):
+    """Build the server (port 0 picks a free one). The handlers read the
+    module-level S, so tests can reset it with `mock_fldigi.S = State()`."""
     srv = SimpleXMLRPCServer(("127.0.0.1", port), requestHandler=H, allow_none=True, logRequests=False)
     reg = srv.register_function
     reg(lambda: "4.2.13-mock", "fldigi.version")
@@ -93,6 +94,12 @@ def main():
     reg(lambda: RIG_MODES, "rig.get_modes")
     reg(m_rig_set_mode, "rig.set_mode")
     reg(lambda: "LSB" if S.rig_mode == "LSB" else "USB", "main.get_wf_sideband")
+    return srv
+
+
+def main():
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 7362
+    srv = make_server(port)
     print(f"mock fldigi listening on 127.0.0.1:{port}", flush=True)
     srv.serve_forever()
 

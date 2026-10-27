@@ -35,9 +35,20 @@ python3 -m pip install -r requirements.txt
 python3 mock_fldigi.py 17362 &                     # fake fldigi
 python3 fldigi_net_scheduler.py --config /tmp/s.json
 ```
-Core logic can be exercised without Qt: import `sched_core` and call
-`execute_entry(...)` against the mock. Keep `python3 -m py_compile *.py` clean.
-Headless Qt: `QT_QPA_PLATFORM=offscreen`.
+Tests (pytest, run headless; CI runs them on Linux/macOS/Windows and Python
+3.9 + current via `.github/workflows/ci.yml`):
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest
+```
+- `tests/conftest.py` starts `mock_fldigi` and `mock_kiwiremote` in-process on
+  free ports and resets their state per test. Tests must never point at the
+  default ports, so a real fldigi/radio/Remote is never touched.
+- `test_fldigi.py` holds the never-transmit guard (runtime method log + a
+  static source scan). Keep it passing.
+- `test_nets_csv.py` fails if `Entry` gains a field `COLUMNS` doesn't cover.
+- GUI tests use `QT_QPA_PLATFORM=offscreen` (set by conftest).
+Keep `python3 -m py_compile *.py` clean and the SPDX header on new test files.
 
 ## fldigi XML-RPC facts (verified on fldigi 4.2.13, 176 methods)
 - `modem.set_by_names` does not exist. Use `modem.set_by_name` (exact,

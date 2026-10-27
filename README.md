@@ -248,6 +248,17 @@ python3 mock_kiwiremote.py      # listens on 127.0.0.1:7373
 python3 fldigi_net_scheduler.py # in another terminal
 ```
 
+The automated tests use the same mocks (started on free ports, so a running
+fldigi is never touched) and run headless:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest
+```
+
+GitHub Actions runs them on Linux, macOS and Windows for every push and pull
+request.
+
 ## Project layout
 
 | File | Purpose |
@@ -257,6 +268,8 @@ python3 fldigi_net_scheduler.py # in another terminal
 | `mock_fldigi.py` | Fake fldigi server for testing |
 | `nets_csv.py` | Command-line CSV export/import of the nets |
 | `mock_kiwiremote.py` | Fake KiwiSDR Remote / ICOM Remote API for testing |
+| `tests/` | pytest suite (core logic, fldigi and Remote API against the mocks, CSV, headless GUI) |
+| `.github/workflows/ci.yml` | CI: compile check, SPDX check and tests on Linux, macOS and Windows |
 
 ## Notes and limits
 
