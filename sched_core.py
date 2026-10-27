@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 jeffreycentex
 """Qt-free core for FLDigi Net Scheduler: schedule model, time math, JSON
-persistence, the fldigi XML-RPC actions and the KiwiRemote HTTP API client.
+persistence, the fldigi XML-RPC actions and the KiwiSDR Remote / ICOM Remote HTTP API client.
 Imported by fldigi_net_scheduler.py.
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ import json
 import os
 import re
 import socket
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -215,7 +216,7 @@ class Settings:
     mode_switch_timeout_s: float = 4.0
     xmlrpc_timeout_s: float = 3.0
     window_geometry: str = ""
-    api_host: str = DEFAULT_API_HOST          # KiwiRemote / Icom client API
+    api_host: str = DEFAULT_API_HOST          # KiwiSDR Remote / ICOM Remote API
     api_port: int = DEFAULT_API_PORT
     api_token: str = ""
     default_sdr_server: str = ""
@@ -526,14 +527,14 @@ def execute_entry(host: str, port: int, e: Entry, label: str, sweet_base: int,
     return problems == 0
 
 
-# ---------------------------------------------------------------- KiwiRemote / Icom client API
+# ---------------------------------------------------------------- KiwiSDR Remote / ICOM Remote API
 
 class ApiUnreachable(Exception):
     pass
 
 
 class KiwiApi:
-    """Client for the KiwiRemote (and Icom client) HTTP/JSON API v1.
+    """Client for the KiwiSDR Remote (and ICOM Remote) HTTP/JSON API v1.
     Standard library only. Talks to localhost directly, never via a proxy."""
 
     def __init__(self, host: str = DEFAULT_API_HOST, port: int = DEFAULT_API_PORT,
@@ -561,7 +562,7 @@ class KiwiApi:
                 return e.code, {"ok": False, "error": {"code": "http_error", "message": str(e)}}
         except (urllib.error.URLError, OSError, socket.timeout) as e:
             reason = getattr(e, "reason", e)
-            raise ApiUnreachable(f"client API not reachable at {self.base} ({reason})") from e
+            raise ApiUnreachable(f"Remote API not reachable at {self.base} ({reason})") from e
 
     def status(self):
         return self._call("GET", "/status")
@@ -604,14 +605,14 @@ _API_MODES = {"USB": "USB", "LSB": "LSB", "AM": "AM", "SAM": "SAM",
 
 
 def api_mode(rig_mode: str) -> Optional[str]:
-    """Map a row's rig mode to one the client API's /tune accepts
+    """Map a row's rig mode to one the Remote API's /tune accepts
     (USB, LSB, AM, PKTUSB, PKTLSB, SAM), or None if it has no equivalent."""
     return _API_MODES.get((rig_mode or "").upper().replace("_", "-").strip())
 
 
 def tune_client(api: KiwiApi, e: Entry, settings: Settings, log: Log) -> None:
     """Send the row's dial frequency (sweet-spot shifted, the same value fldigi
-    gets) and rig mode to the client API. The digital mode stays with fldigi."""
+    gets) and rig mode to the Remote API. The digital mode stays with fldigi."""
     khz = parse_freq_khz(e.freq_khz)
     dial, _, _ = plan_tuning(None if khz is None else float(round(khz * 1000)),
                              int(e.sweet_spot_hz), int(settings.sweet_spot_base_hz))
@@ -619,28 +620,28 @@ def tune_client(api: KiwiApi, e: Entry, settings: Settings, log: Log) -> None:
     if e.rig_mode and e.rig_mode != NO_CHANGE:
         mode = api_mode(e.rig_mode)
         if mode is None:
-            log("warn", f"  client: rig mode '{e.rig_mode}' has no API equivalent "
+            log("warn", f"  Remote: rig mode '{e.rig_mode}' has no API equivalent "
                         f"(USB/LSB/AM); sending the frequency only")
     if dial is None and mode is None:
         return
     try:
         code, r = api.tune(dial, mode)
     except ApiUnreachable:
-        log("info", "  client API not running: tuning through fldigi/rigctl only")
+        log("info", "  Remote API not running: tuning through fldigi/rigctl only")
         return
     if r.get("ok"):
         t = r.get("tune") or {}
         f = t.get("freq_hz", dial)
-        log("ok", f"  client tuned → {f / 1000:.3f} kHz {t.get('mode', mode or '')}".rstrip()
-            if f is not None else f"  client mode → {t.get('mode', mode)}")
+        log("ok", f"  Remote tuned → {f / 1000:.3f} kHz {t.get('mode', mode or '')}".rstrip()
+            if f is not None else f"  Remote mode → {t.get('mode', mode)}")
     else:
-        log("warn", f"  client /tune failed: {api_error_text(r)}")
+        log("warn", f"  Remote /tune failed: {api_error_text(r)}")
 
 
 def recording_name(net_name: str) -> str:
-    """Net name with spaces removed + the API's UTC date/time fields,
-    e.g. 'TexasDigitalNet_{date}T{time}' -> TexasDigitalNet_20261027T010000Z.wav"""
-    clean = re.sub(r"\s+", "", net_name or "")
+    """Net name with spaces turned into dashes + the API's UTC date/time fields,
+    e.g. 'Texas-Digital-Net_{date}T{time}' -> Texas-Digital-Net_20261027T010000Z.wav"""
+    clean = re.sub(r"\s+", "-", (net_name or "").strip())
     clean = re.sub(r"[^A-Za-z0-9._+-]", "_", clean) or "net"
     return f"{clean}_{{date}}T{{time}}"
 
@@ -735,7 +736,7 @@ def start_net(api: KiwiApi, e: Entry, label: str, settings: Settings,
                 elif code == 202 and r.get("ok"):
                     log("ok", f"  SDR connect accepted for {server}")
                 elif code in (503, 504):
-                    log("warn", f"  SDR {api_error_text(r)} - the client keeps retrying")
+                    log("warn", f"  SDR {api_error_text(r)} - the Remote keeps retrying")
                 else:
                     sdr_ok = False
                     log("error", f"  SDR connect failed: {api_error_text(r)}")
@@ -759,7 +760,7 @@ def start_net(api: KiwiApi, e: Entry, label: str, settings: Settings,
             try:
                 code, r = api.record_start(name, max_s)
                 if code == 409:
-                    log("warn", "  a recording was already running in the client; stopping it")
+                    log("warn", "  a recording was already running in the Remote; stopping it")
                     api.record_stop()
                     code, r = api.record_start(name, max_s)
                 if r.get("ok"):
@@ -795,3 +796,19 @@ def api_status_summary(api: KiwiApi) -> dict:
     return {"ok": True, "state": r.get("state", "?"), "server": r.get("server") or "",
             "recording": bool(rec.get("active")), "rec_seconds": rec.get("seconds") or 0,
             "app_version": r.get("app_version", "")}
+
+
+# ---------------------------------------------------------------- default file location (no Qt)
+
+APP_ID = "FLDigiNetScheduler"
+
+
+def default_config_path() -> str:
+    """Same path the GUI uses (Qt's AppConfigLocation), without needing Qt."""
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Preferences")
+    elif os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser(r"~\AppData\Local")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, APP_ID, "schedule.json")

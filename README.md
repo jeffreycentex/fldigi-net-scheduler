@@ -5,7 +5,7 @@ A cross-platform (Windows, macOS, Linux) desktop app that retunes
 schedule of nets in a grid. At each net's start time (UTC), the app uses
 fldigi's XML-RPC interface to set the rig mode, dial frequency, modem and
 audio carrier. It can also connect a KiwiSDR and record the net through the
-KiwiRemote (or Icom client) remote control API, and end both when the net's
+KiwiSDR Remote (or ICOM Remote) remote control API, and end both when the net's
 duration is up.
 
 **The app never transmits.** It only changes receive-side settings. Keying
@@ -31,10 +31,11 @@ the radio is up to you.
 - The schedule and settings autosave to a JSON file. File › Open and Save As
   let you use other files.
 - **SDR:** each net can connect to a KiwiSDR server, with an optional
-  password, through the client API. Choose the saved Default SDR, a custom
+  password, through the Remote API. Choose the saved Default SDR, a custom
   server, or Off.
-- **Recording:** each net can record to WAV through the client API. The file
-  is named after the net, without spaces, plus the UTC date and time.
+- **Recording:** each net can record to WAV through the Remote API. The file
+  is named after the net, with spaces turned into dashes, plus the UTC date
+  and time.
 - **Duration:** when it runs out, the recording stops and an SDR the net
   connected is disconnected. A net still running when the next one starts is
   ended first.
@@ -49,8 +50,8 @@ the radio is up to you.
 - fldigi with XML-RPC enabled. It is on by default, port 7362. Tested
   against fldigi 4.2.13.
 - For rig mode and frequency changes, fldigi needs working rig control
-  (flrig, Hamlib or RigCAT). With KiwiRemote, that is its rigctld on port 4532.
-- For SDR and recording: KiwiRemote, or the Icom client, with its remote
+  (flrig, Hamlib or RigCAT). With KiwiSDR Remote, that is its rigctld on port 4532.
+- For SDR and recording: KiwiSDR Remote, or ICOM Remote, with its remote
   control API turned on (default `127.0.0.1:7373`). Both use the same API on
   the same port. Only one should run at a time, because they share the audio
   and rigctl.
@@ -80,8 +81,8 @@ add `--config PATH`.
 | Rig mode | Sent with `rig.set_mode`. `(no change)` skips this step |
 | Digital mode | fldigi modem name, sent with `modem.set_by_name`. `(no change)` skips this step |
 | Sweet spot (Hz) | The net's sweet spot (default 1500, meaning no shift) |
-| SDR | Button that opens a dialog: **Off**, **Use the Default SDR**, or **Custom** server and password. Use Off with the Icom client |
-| Record | `On` / `Off` (default Off): record the net through the client API |
+| SDR | Button that opens a dialog: **Off**, **Use the Default SDR**, or **Custom** server and password. Use Off with ICOM Remote |
+| Record | `On` / `Off` (default Off): record the net through the Remote API |
 | Duration | Minutes the net runs (default 60). Required when SDR or Record is used |
 
 The day is evaluated in UTC because the start time is in UTC. For example, a
@@ -97,9 +98,9 @@ column shows this.
    password, waiting up to 15 s. The session limit is set to the duration
    plus 2 minutes, so the client's 45-minute limit for connections without a
    password doesn't cut a longer net short. If the server is busy (503) or
-   slow to answer (504), the client keeps retrying and the net carries on. If
+   slow to answer (504), the Remote keeps retrying and the net carries on. If
    the connect fails outright (502), the net is not recorded.
-2. **Client tune** (if the client API is running): `POST /tune` with the same
+2. **Client tune** (if the Remote API is running): `POST /tune` with the same
    dial frequency fldigi gets (sweet spot shift included) and the rig mode.
    USB, LSB and AM are sent as they are; data modes such as USB-D or DATA-L
    are sent as USB or LSB. Modes with no equivalent, such as CW or FM, send
@@ -115,8 +116,8 @@ column shows this.
    was already active, because fldigi does not re-centre when the mode
    doesn't change.
 7. **Recording** (if Record is On): `POST /record/start` with the name
-   `<NetNameWithoutSpaces>_{date}T{time}`, for example
-   `TexasDigitalNet_20261027T010000Z.wav` (date and time in UTC), and
+   `<Net-Name-With-Dashes>_{date}T{time}`, for example
+   `Texas-Digital-Net_20261027T010000Z.wav` (date and time in UTC), and
    `max_seconds` = the duration plus 2 minutes. The client then stops the
    recording itself even if this app is closed.
 
@@ -148,7 +149,7 @@ Sweet spot cell to see the computed dial.
 
 ### SDR settings
 
-- **Default SDR…** (in the client API box) stores one server and password.
+- **Default SDR…** (in the Remote API box) stores one server and password.
   Rows set to *Use the Default SDR* follow it, so changing it updates all of
   those rows.
 - A row set to *Custom* uses its own server and password.
@@ -195,13 +196,49 @@ Older files are converted automatically when loaded. Schema 1 stored
 `sweet_spot_offset_hz`; rows from schema 2 get SDR Off, Record Off and a
 60-minute duration.
 
+## Exporting and importing nets as CSV
+
+`nets_csv.py` is a separate command-line tool (no Qt needed). Use it to edit
+the nets in Excel. **Close the GUI before importing**: it saves when it
+closes and would overwrite the import.
+
+```bash
+python3 nets_csv.py export -o nets.csv          # add --no-passwords to leave passwords out
+python3 nets_csv.py import nets.csv --dry-run   # check the file without saving
+python3 nets_csv.py import nets.csv             # replace all nets with the CSV
+python3 nets_csv.py import nets.csv --append    # add the CSV nets after the existing ones
+```
+
+Both commands use the GUI's schedule file by default. Use `--config PATH`
+for another file. An import replaces the nets but keeps the settings, the
+Default SDR and a running net. It writes `schedule.json.bak-<timestamp>`
+first.
+
+The CSV has a header row with these columns, in any order: `enabled`,
+`name`, `day`, `start_utc`, `freq_khz`, `rig_mode`, `digital_mode`,
+`sweet_spot_hz`, `sdr`, `sdr_server`, `sdr_password`, `record`,
+`duration_min`.
+
+The import also accepts what Excel tends to write back:
+- `;` as the separator
+- times like `1:00`, `1:00:00` or `1:00 AM`
+- full day names
+- `TRUE`/`FALSE`, `yes`/`no` or `1`/`0` for On/Off
+- a comma as the decimal point
+- extra columns, which are ignored
+
+A blank `rig_mode` or `digital_mode` means "(no change)". Rows that can't be
+read stop the import, with line numbers listed. Rows that are readable but
+incomplete (for example Custom SDR with no server) are imported and show red
+in the GUI.
+
 ## Testing without a radio
 
 `mock_fldigi.py` is a small fake fldigi XML-RPC server. It mimics the
 behaviour seen on fldigi 4.2.13: mode switches are asynchronous, setting the
 current mode again does nothing, and OFDM modes fail to switch.
 
-`mock_kiwiremote.py` fakes the client API. The servers `busy.example`,
+`mock_kiwiremote.py` fakes the Remote API. The servers `busy.example`,
 `fail.example` and `slow.example` return 503, 502 and 504. It also accepts
 `/tune`.
 
@@ -216,9 +253,10 @@ python3 fldigi_net_scheduler.py # in another terminal
 | File | Purpose |
 |---|---|
 | `fldigi_net_scheduler.py` | PySide6 GUI: grid, clocks, minute timer, background XML-RPC worker |
-| `sched_core.py` | Qt-free logic: data model, validation, UTC time math, JSON, fldigi actions, client API, net start/end |
+| `sched_core.py` | Qt-free logic: data model, validation, UTC time math, JSON, fldigi actions, Remote API, net start/end |
 | `mock_fldigi.py` | Fake fldigi server for testing |
-| `mock_kiwiremote.py` | Fake KiwiRemote / Icom client API for testing |
+| `nets_csv.py` | Command-line CSV export/import of the nets |
+| `mock_kiwiremote.py` | Fake KiwiSDR Remote / ICOM Remote API for testing |
 
 ## Notes and limits
 

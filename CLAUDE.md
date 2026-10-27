@@ -6,7 +6,7 @@ Guidance for Claude (and other contributors) working in this repository.
 FLDigi Net Scheduler: a PySide6 desktop app (Windows/macOS/Linux) that retunes
 fldigi over XML-RPC on a weekly UTC schedule. Per entry it sets rig mode, dial
 frequency (shifted for the sweet spot), modem and audio carrier. Optionally it
-connects an SDR and records the net through the KiwiRemote / Icom client HTTP
+connects an SDR and records the net through the KiwiSDR Remote / ICOM Remote HTTP
 API, and ends both when the net's duration runs out. **It must never
 transmit**: never call `main.tx`, `main.tune`, `main.run_macro`,
 `text.add_tx*`, `wefax.send_file` or `navtex.send_message`.
@@ -21,8 +21,12 @@ transmit**: never call `main.tx`, `main.tune`, `main.run_macro`,
 - `fldigi_net_scheduler.py`: GUI only. All XML-RPC calls go through `Worker`
   (a single background thread). Results come back through `Bridge` Qt signals.
   Never call XML-RPC on the GUI thread.
+- `nets_csv.py`: stand-alone CSV export/import of the nets (no Qt). Columns are
+  the `COLUMNS` list (JSON field names, with `sdr` for `sdr_mode`). It is
+  forgiving about Excel's re-saved formats, and backs up the JSON before an
+  import. Keep it in sync when `Entry` gains fields.
 - `mock_fldigi.py`: fake fldigi server for tests and manual runs.
-- `mock_kiwiremote.py`: fake client API. `busy.`, `fail.` and `slow.` servers
+- `mock_kiwiremote.py`: fake Remote API. `busy.`, `fail.` and `slow.` servers
   return 503, 502 and 504.
 
 ## Run / test
@@ -66,12 +70,12 @@ to every rig mode and sideband:
 Example: 7110 kHz with sweet spot 900 and FLDigi 1500 gives dial 7109.400 kHz,
 carrier 1500. The math is in `plan_tuning()`; keep the GUI tooltip using it too.
 
-## KiwiRemote / Icom client API (spec: KiwiRemote's API.md, v1)
+## KiwiSDR Remote / ICOM Remote API (spec: KiwiSDR Remote's API.md, v1)
 - Base URL `http://<api_host>:<api_port>/api/v1` (default `127.0.0.1:7373`).
   POSTs must send `Content-Type: application/json`, even with `{}`. Use the
   optional token as `Authorization: Bearer`. `KiwiApi` bypasses proxies.
-- The Kiwi and Icom clients expose the same API on the same port, and only one
-  runs at a time (they share audio and rigctl). Icom nets use SDR Off and only
+- KiwiSDR Remote and ICOM Remote expose the same API on the same port, and only one
+  runs at a time (they share audio and rigctl). ICOM Remote nets use SDR Off and only
   record.
 - Start order (`start_net`): end the previous active net, then `/connect`
   (`wait` 15, `session_limit_min` = duration + 2), then `/tune` (`tune_client`:
@@ -79,7 +83,7 @@ carrier 1500. The math is in `plan_tuning()`; keep the GUI tooltip using it too.
   USB/LSB/AM/PKTUSB/PKTLSB/SAM; never the digital mode; skipped quietly if the
   API isn't running), then the fldigi steps (which still send freq/mode via
   rigctl for direct-to-radio use), then
-  `/record/start` (`name` = net name without spaces + `_{date}T{time}`,
+  `/record/start` (`name` = net name with spaces as dashes + `_{date}T{time}`,
   `max_seconds` = duration*60 + 120). A 502 skips recording. 503/504 carry on.
   A 409 stops the client's existing recording and retries once.
 - End (`end_net`): `/record/stop`, then `/disconnect` only if this net
@@ -95,6 +99,8 @@ carrier 1500. The math is in `plan_tuning()`; keep the GUI tooltip using it too.
 - Times are entered in UTC (`HH:MM`). Days are evaluated in UTC.
 - The grid starts with `MIN_ROWS` (2) rows and is sized for `VISIBLE_ROWS` (5)
   before scrolling. Blank rows are not saved.
+- `sched_core.default_config_path()` mirrors Qt's AppConfigLocation, so
+  non-GUI tools find the same schedule file.
 - Bump `SCHEMA_VERSION` when the JSON shape changes, and migrate in
   `Entry.from_dict` / `Settings.from_dict`. Never break existing schedule files.
 - Saves are atomic (write `.tmp`, then `os.replace`). A corrupt file is

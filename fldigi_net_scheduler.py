@@ -5,8 +5,8 @@
 
 Connects to fldigi's XML-RPC server, holds a weekly schedule of nets, and at
 each scheduled UTC minute sets rig mode, dial frequency, modem and carrier.
-Optionally connects an SDR and records the net through the KiwiRemote /
-Icom client API, and ends both when the net's duration runs out.
+Optionally connects an SDR and records the net through the KiwiSDR Remote /
+ICOM Remote API, and ends both when the net's duration runs out.
 It never keys the transmitter.
 
 Run:   python3 fldigi_net_scheduler.py [--config PATH]
@@ -56,8 +56,8 @@ HEADER_TIPS = {
                 "(FLDigi PSK Sweet Spot - this value). "
                 "Example: 7110 kHz, sweet spot 900, FLDigi 1500 -> dial 7109.400 kHz, carrier 1500"),
     COL_SDR: ("SDR server for this net: Off, the Default SDR, or a custom server and password. "
-              "Connected at the start through the client API, disconnected at the end"),
-    COL_REC: "Record the net through the client API (file: net name without spaces + UTC date/time)",
+              "Connected at the start through the Remote API, disconnected at the end"),
+    COL_REC: "Record the net through the Remote API (file: net name with spaces as dashes + UTC date/time)",
     COL_DUR: "How long the net runs. At the end the recording stops and a connected SDR is disconnected",
 }
 BAD_STYLE = "background-color: rgb(255, 205, 205);"
@@ -103,7 +103,7 @@ class SdrDialog(QDialog):
         self.default_only = default_only
         v = QVBoxLayout(self)
         self.group = QButtonGroup(self)
-        self.r_off = QRadioButton("Off - don't connect an SDR (use this for the Icom client)")
+        self.r_off = QRadioButton("Off - don't connect an SDR (use this for ICOM Remote)")
         dflt = default_server or "not set - use the Default SDR… button"
         self.r_def = QRadioButton(f"Use the Default SDR ({dflt})")
         self.r_cus = QRadioButton("Custom server:")
@@ -206,7 +206,7 @@ class Bridge(QObject):
     log = Signal(str, str)
     status = Signal(dict)
     lists = Signal(list, list)
-    kiwi = Signal(dict)          # client API status
+    kiwi = Signal(dict)          # Remote API status
     active = Signal(dict)        # ActiveNet as dict after a start ({} = nothing to end)
 
 
@@ -318,7 +318,7 @@ class MainWindow(QMainWindow):
         conn_box = QGroupBox("fldigi XML-RPC")
         cl = QHBoxLayout(conn_box)
         self.host_edit = QLineEdit(core.DEFAULT_HOST)
-        self.host_edit.setMinimumWidth(200)
+        self.host_edit.setMinimumWidth(260)
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(core.DEFAULT_PORT)
@@ -341,11 +341,11 @@ class MainWindow(QMainWindow):
         cl.addSpacing(12)
         cl.addWidget(self.status_lbl, 1)
 
-        # client API row
-        api_box = QGroupBox("SDR / recording client API (KiwiRemote or Icom client)")
+        # Remote API row
+        api_box = QGroupBox("SDR / recording Remote API (KiwiSDR Remote or ICOM Remote)")
         al = QHBoxLayout(api_box)
         self.api_host_edit = QLineEdit(core.DEFAULT_API_HOST)
-        self.api_host_edit.setMinimumWidth(200)
+        self.api_host_edit.setMinimumWidth(260)
         self.api_port_spin = QSpinBox()
         self.api_port_spin.setRange(1, 65535)
         self.api_port_spin.setValue(core.DEFAULT_API_PORT)
@@ -357,9 +357,8 @@ class MainWindow(QMainWindow):
             w.editingFinished.connect(self._on_api_changed)
         self.api_port_spin.valueChanged.connect(self._on_api_changed)
         self.default_sdr_btn = QPushButton("Default SDR…")
-        self.default_sdr_btn.setMinimumWidth(300)
         self.default_sdr_btn.clicked.connect(lambda *_: self._edit_default_sdr())
-        self.kiwi_lbl = QLabel("● client API: not checked yet")
+        self.kiwi_lbl = QLabel("● Remote API: not checked yet")
         self.kiwi_lbl.setTextFormat(Qt.TextFormat.RichText)
         for w in (QLabel("Host"), self.api_host_edit, QLabel("Port"), self.api_port_spin,
                   QLabel("Token"), self.api_token_edit, self.default_sdr_btn):
@@ -426,7 +425,7 @@ class MainWindow(QMainWindow):
         hh.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
         for col, w in ((COL_ON, 64), (COL_DAY, 100), (COL_TIME, 80), (COL_LOCAL, 110),
                        (COL_FREQ, 90), (COL_MODE, 100), (COL_DIGI, 130), (COL_SWEET, 95),
-                       (COL_SDR, 230), (COL_REC, 64), (COL_DUR, 90)):
+                       (COL_SDR, 140), (COL_REC, 64), (COL_DUR, 90)):
             self.table.setColumnWidth(col, w)
         self.table.verticalHeader().setDefaultSectionSize(ROW_H)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -763,9 +762,10 @@ class MainWindow(QMainWindow):
 
     def _refresh_default_btn(self):
         srv = self.settings.default_sdr_server
-        self.default_sdr_btn.setText(f"Default SDR: {srv}" if srv else "Default SDR…")
-        self.default_sdr_btn.setToolTip("Server used by rows whose SDR is set to Default"
-                                        + (" (with password)" if self.settings.default_sdr_password else ""))
+        self.default_sdr_btn.setText("Default SDR…")
+        self.default_sdr_btn.setToolTip(
+            (f"Default SDR: {srv}" + (" (with password)" if self.settings.default_sdr_password else "")
+             if srv else "No Default SDR set") + ". Used by rows whose SDR is set to Default")
 
     def _on_api_changed(self, *_):
         if self._loading:
@@ -948,7 +948,7 @@ class MainWindow(QMainWindow):
     def _on_kiwi(self, st: dict):
         self._kiwi_pending = False
         if st.get("ok"):
-            txt = f"<span style='color:#2e7d32'>●</span> client {html.escape(st['state'])}"
+            txt = f"<span style='color:#2e7d32'>●</span> Remote {html.escape(st['state'])}"
             if st.get("server"):
                 txt += f" │ {html.escape(st['server'])}"
             if st.get("recording"):
@@ -959,7 +959,7 @@ class MainWindow(QMainWindow):
                 self.log("ok", f"Client API reachable (app {st.get('app_version') or '?'})")
             self._kiwi_ok = True
         else:
-            self.kiwi_lbl.setText(f"<span style='color:#888'>●</span> client API: "
+            self.kiwi_lbl.setText(f"<span style='color:#888'>●</span> Remote API: "
                                   f"{html.escape(st.get('error', ''))}")
             if self._kiwi_ok is True:
                 self.log("warn", f"Client API not reachable: {st.get('error')}")

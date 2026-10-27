@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 jeffreycentex
-"""Minimal fake KiwiRemote / Icom client API (v1) for testing FLDigi Net
+"""Minimal fake KiwiSDR Remote / ICOM Remote API (v1) for testing FLDigi Net
 Scheduler without the real client. Implements /status, /connect,
 /disconnect, /tune, /record/start and /record/stop with the documented status
 codes. Special servers for testing:
@@ -124,7 +124,7 @@ class H(BaseHTTPRequestHandler):
 
 def serve(port=7373):
     srv = ThreadingHTTPServer(("127.0.0.1", port), H)
-    print(f"mock KiwiRemote API on http://127.0.0.1:{port}/api/v1", flush=True)
+    print(f"mock KiwiSDR Remote / ICOM Remote API on http://127.0.0.1:{port}/api/v1", flush=True)
     srv.serve_forever()
 
 
