@@ -111,8 +111,29 @@ def test_corrupt_file_is_renamed_not_overwritten(window, tmp_path, monkeypatch):
 def test_connects_and_fetches_lists(window, fldigi):
     w = window()
     wait_until(lambda: w._connected is True)
-    wait_until(lambda: "SCAMPFSK" in w.digital_modes and "OFDM500F" not in w.digital_modes)
+    wait_until(lambda: "NULL" in w.digital_modes)      # only the mock reports NULL
+    assert "OFDM500F" not in w.digital_modes
     assert "rig.get_modes" in fldigi.methods
+
+
+def test_fldigi_down_logs_one_clear_error(window, tmp_path, closed_port, kiwi):
+    path = str(tmp_path / "s.json")
+    st = Settings(port=closed_port, api_host=kiwi.host, api_port=kiwi.port,
+                  scheduler_enabled=False)
+    core.save_document(core.Document(st, []), path)
+    w = window(path)
+    wait_until(lambda: w._connected is False)
+    w.worker.pool.submit(lambda: None).result(timeout=10)   # let queued tasks finish
+    QApplication.processEvents()
+    log = w.log_view.toPlainText()
+    assert log.count("fldigi not reachable") == 1
+    assert "task:" not in log and "Mode lists" not in log
+
+    w._refresh_lists()                             # the button, while fldigi is down
+    w.worker.pool.submit(lambda: None).result(timeout=10)
+    QApplication.processEvents()
+    assert "Mode lists not refreshed" in w.log_view.toPlainText()
+    assert w.digital_modes == list(core.DEFAULT_DIGITAL_MODES)
 
 
 def test_manual_run_and_stop(window, fldigi, kiwi, config):

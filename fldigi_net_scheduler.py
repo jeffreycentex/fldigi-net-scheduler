@@ -221,14 +221,19 @@ class Worker:
         try:
             fn(*args)
         except Exception as e:  # last-resort guard; individual steps log their own errors
-            self.b.log.emit("error", f"{getattr(fn, '__name__', 'task')}: {core.describe_error(e)}")
+            self.b.log.emit("error", f"Background task failed: {core.describe_error(e)}")
 
     def poll(self, host, port, timeout):
         self.pool.submit(self._run, lambda: self.b.status.emit(core.poll_status(host, port, timeout)))
 
     def refresh_lists(self, host, port, timeout):
         def task():
-            rig, modems = core.fetch_lists(host, port, timeout)
+            try:
+                rig, modems = core.fetch_lists(host, port, timeout)
+            except Exception as e:
+                self.b.log.emit("warn", f"Mode lists not refreshed ({core.describe_error(e)}); "
+                                        f"using the current lists")
+                return
             self.b.lists.emit(rig, modems)
             self.b.log.emit("info", f"fldigi reports {len(modems)} modems and "
                                     f"{len(rig)} rig modes")
@@ -923,8 +928,7 @@ class MainWindow(QMainWindow):
         self.host_edit.setText(host)
         self.log("info", f"Connecting to http://{host}:{self.port_spin.value()}/")
         self._connected = None
-        self._poll(force=True)
-        self._refresh_lists()
+        self._poll(force=True)       # the mode lists are fetched once the poll succeeds
         self._mark_dirty()
 
     def _refresh_lists(self):
@@ -975,8 +979,7 @@ class MainWindow(QMainWindow):
                 f"{html.escape(st['modem'])} @ {st['carrier']} Hz")
             if self._connected is not True:
                 self.log("ok", f"Connected to fldigi {st['version']}")
-                if self._connected is False:
-                    self._refresh_lists()
+                self._refresh_lists()
             self._connected = True
         else:
             self.status_lbl.setText(
