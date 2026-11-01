@@ -11,6 +11,8 @@ duration is up.
 **The app never transmits.** It only changes receive-side settings. Keying
 the radio is up to you.
 
+![FLDigi Net Scheduler main window](docs/screenshot.jpg)
+
 ## Features
 
 - Connects to fldigi's XML-RPC server (default `127.0.0.1:7362`). Host and
