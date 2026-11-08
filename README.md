@@ -16,12 +16,12 @@ the radio is up to you.
 ## Features
 
 - Connects to fldigi's XML-RPC server (default `127.0.0.1:7362`). Host and
-  port are editable, and a live status line shows the dial, rig mode, modem
-  and carrier.
+  port are editable on the Connections tab, where live status shows the dial,
+  rig mode, modem and carrier.
 - Local and UTC clocks, plus a countdown to the next scheduled net.
-- Schedule grid that starts with 2 rows and shows about 5 before scrolling.
-  Use Add row or Insert row for more. Each row has: on/off, label, day,
-  start time (UTC), local start time, frequency, rig mode, digital mode,
+- The Schedule tab starts with 2 rows and grows with the window. Use Add row
+  to start a new entry, or open Row actions to insert, move, delete or sort
+  rows. Each row has on/off, label, day, start time (UTC), local start time, frequency, rig mode, digital mode,
   sweet spot, SDR, Record and Duration.
 - Day, rig mode and digital mode are dropdowns. Once connected, the mode
   lists are loaded from fldigi itself (`rig.get_modes`, `modem.get_names`).
@@ -43,12 +43,13 @@ the radio is up to you.
   ended first.
 - "Run selected now" starts the selected net immediately, including the SDR,
   recording and duration. "Stop active net" ends the running net early.
-- Every step is verified against fldigi and logged (OK, warnings, errors).
+- The Activity tab shows the log of steps verified against fldigi, along with
+  warnings and errors.
 
 ## Requirements
 
-- Python 3.9 or newer
-- [PySide6](https://pypi.org/project/PySide6/) 6.5 or newer
+- For a source install, Python 3.9 or newer and
+  [PySide6](https://pypi.org/project/PySide6/) 6.5 or newer.
 - fldigi with XML-RPC enabled. It is on by default, port 7362. Tested
   against fldigi 4.2.13.
 - For rig mode and frequency changes, fldigi needs working rig control
@@ -60,6 +61,17 @@ the radio is up to you.
 
 ## Install and run
 
+### Single-file Windows and Linux builds
+
+In GitHub Actions, open **Single-file builds**, select a successful run, and
+download the artifact for your platform. Extract the download and run
+`fldigi-net-scheduler.exe` on Windows. On Linux, make the extracted file
+executable with `chmod +x fldigi-net-scheduler` and run
+`./fldigi-net-scheduler`. The executable bundles Python and PySide6. Linux
+builds still use system libraries and target x86-64 Ubuntu 24.04.
+
+### Run from source
+
 ```bash
 git clone https://github.com/jeffreycentex/fldigi-net-scheduler.git
 cd fldigi-net-scheduler
@@ -69,6 +81,30 @@ python3 fldigi_net_scheduler.py
 
 On Windows, use `py` instead of `python3`. To use a specific schedule file,
 add `--config PATH`.
+
+## Build from source
+
+Run these commands on the target Windows or Linux machine. Use `py` on
+Windows or `python3` on Linux if your interpreter is named differently.
+
+```sh
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --clean --noconfirm fldigi_net_scheduler.spec
+```
+
+The build produces one executable in `dist/`. Build separately on each
+target OS. For Linux distribution, build on the oldest Linux distribution
+you intend to support. See the [PyInstaller build notes](https://pyinstaller.org/en/stable/usage.html#making-gnu-linux-apps-forward-compatible).
+
+## Application versions
+
+**Help › About** and `--version` report the value in
+[`app_version.py`](app_version.py). To prepare a versioned build, update
+`VERSION`, commit that change, and tag the commit with that exact version
+(for example, `0.10`). Push the tag to start the **Single-file builds**
+workflow, or run it manually from GitHub Actions. The workflow uploads
+versioned artifacts for Windows and Linux. The schedule JSON's
+`schema_version` tracks file-format changes separately.
 
 ## The schedule grid
 
@@ -82,7 +118,7 @@ add `--config PATH`.
 | Freq (kHz) | The net's listed dial frequency, e.g. `7110` or `14070.5`. Blank means don't change it |
 | Rig mode | Sent with `rig.set_mode`. `(no change)` skips this step |
 | Digital mode | fldigi modem name, sent with `modem.set_by_name`. `(no change)` skips this step |
-| Sweet spot (Hz) | The net's sweet spot (default 1500, meaning no shift) |
+| Sweet spot | The net's sweet spot in Hz (default 1500, meaning no shift) |
 | SDR | Button that opens a dialog: **Off**, **Use the Default SDR**, or **Custom** server and password. Use Off with ICOM Remote |
 | Record | `On` / `Off` (default Off): record the net through the Remote API |
 | Duration | Minutes the net runs (default 60). Required when SDR or Record is used |

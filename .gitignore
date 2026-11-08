@@ -7,5 +7,6 @@ venv/
 build/
 dist/
 *.spec
+!fldigi_net_scheduler.spec
 .DS_Store
 .pytest_cache/

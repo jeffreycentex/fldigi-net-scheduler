@@ -21,17 +21,19 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, QRegularExpression, QStandardPaths, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QFontDatabase, QKeySequence, QRegularExpressionValidator
+from PySide6.QtGui import QAction, QBrush, QColor, QFontDatabase, QIcon, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox, QSplitter, QStyledItemDelegate,
+    QMenu, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QSpinBox, QStyledItemDelegate, QTabWidget,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 import sched_core as core
+from app_version import VERSION
 from sched_core import DAYS, NO_CHANGE, Entry
 
 APP_NAME = "FLDigi Net Scheduler"
@@ -40,7 +42,7 @@ APP_ID = "FLDigiNetScheduler"
 (COL_ON, COL_NAME, COL_DAY, COL_TIME, COL_LOCAL,
  COL_FREQ, COL_MODE, COL_DIGI, COL_SWEET, COL_SDR, COL_REC, COL_DUR) = range(12)
 HEADERS = ["On", "Net / label", "Day (UTC)", "Start UTC", "Local start",
-           "Freq (kHz)", "Rig mode", "Digital mode", "Sweet spot (Hz)",
+           "Freq (kHz)", "Rig mode", "Digital mode", "Sweet spot",
            "SDR", "Record", "Duration"]
 VISIBLE_ROWS = 5
 ROW_H = 28
@@ -319,11 +321,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         fixed = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 
-        # connection row
+        # Connection settings
         conn_box = QGroupBox("fldigi XML-RPC")
-        cl = QHBoxLayout(conn_box)
+        cl = QFormLayout(conn_box)
         self.host_edit = QLineEdit(core.DEFAULT_HOST)
-        self.host_edit.setMinimumWidth(260)
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(core.DEFAULT_PORT)
@@ -337,27 +338,34 @@ class MainWindow(QMainWindow):
         self.base_spin.setToolTip("fldigi's PSK sweet spot. The carrier is set here and each row's "
                                   "dial is reduced by (this - row sweet spot)")
         self.base_spin.valueChanged.connect(self._on_widget_changed)
-        self.status_lbl = QLabel("● not connected")
+        self.status_lbl = QLabel("Checking fldigi…")
         self.status_lbl.setTextFormat(Qt.TextFormat.RichText)
         self.status_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        for w in (QLabel("Host"), self.host_edit, QLabel("Port"), self.port_spin, self.connect_btn,
-                  QLabel("   FLDigi PSK Sweet Spot"), self.base_spin):
-            cl.addWidget(w)
-        cl.addSpacing(12)
-        cl.addWidget(self.status_lbl, 1)
+        self.status_lbl.setWordWrap(True)
+        self.host_edit.setMaximumWidth(320)
+        self.port_spin.setMaximumWidth(120)
+        self.base_spin.setMaximumWidth(120)
+        cl.addRow("Host", self.host_edit)
+        cl.addRow("Port", self.port_spin)
+        cl.addRow("FLDigi PSK Sweet Spot", self.base_spin)
+        conn_actions = QHBoxLayout()
+        conn_actions.addWidget(self.connect_btn)
+        refresh_btn = QPushButton("Refresh mode lists")
+        refresh_btn.clicked.connect(self._refresh_lists)
+        conn_actions.addWidget(refresh_btn)
+        conn_actions.addStretch()
+        cl.addRow(conn_actions)
+        cl.addRow(self.status_lbl)
 
-        # Remote API row
-        api_box = QGroupBox("SDR / recording Remote API (KiwiSDR Remote or ICOM Remote)")
-        al = QHBoxLayout(api_box)
+        api_box = QGroupBox("KiwiSDR Remote / ICOM Remote")
+        al = QFormLayout(api_box)
         self.api_host_edit = QLineEdit(core.DEFAULT_API_HOST)
-        self.api_host_edit.setMinimumWidth(260)
         self.api_port_spin = QSpinBox()
         self.api_port_spin.setRange(1, 65535)
         self.api_port_spin.setValue(core.DEFAULT_API_PORT)
         self.api_token_edit = QLineEdit()
         self.api_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_token_edit.setPlaceholderText("optional")
-        self.api_token_edit.setMaximumWidth(140)
         for w in (self.api_host_edit, self.api_token_edit):
             w.editingFinished.connect(self._on_api_changed)
         self.api_port_spin.valueChanged.connect(self._on_api_changed)
@@ -365,54 +373,59 @@ class MainWindow(QMainWindow):
         self.default_sdr_btn.clicked.connect(lambda *_: self._edit_default_sdr())
         self.kiwi_lbl = QLabel("● Remote API: not checked yet")
         self.kiwi_lbl.setTextFormat(Qt.TextFormat.RichText)
-        for w in (QLabel("Host"), self.api_host_edit, QLabel("Port"), self.api_port_spin,
-                  QLabel("Token"), self.api_token_edit, self.default_sdr_btn):
-            al.addWidget(w)
-        al.addSpacing(12)
-        al.addWidget(self.kiwi_lbl, 1)
+        self.kiwi_lbl.setWordWrap(True)
+        self.api_host_edit.setMaximumWidth(320)
+        self.api_port_spin.setMaximumWidth(120)
+        self.api_token_edit.setMaximumWidth(320)
+        al.addRow("Host", self.api_host_edit)
+        al.addRow("Port", self.api_port_spin)
+        al.addRow("API token", self.api_token_edit)
+        sdr_actions = QHBoxLayout()
+        sdr_actions.addWidget(self.default_sdr_btn)
+        sdr_actions.addStretch()
+        al.addRow(sdr_actions)
+        al.addRow(self.kiwi_lbl)
 
-        # clocks
-        clock_box = QGroupBox("Time")
-        kl = QHBoxLayout(clock_box)
-        big = QFont(fixed)
-        big.setPointSize(max(big.pointSize() + 6, 16))
-        self.local_lbl = QLabel()
-        self.utc_lbl = QLabel()
-        for lbl in (self.local_lbl, self.utc_lbl):
-            lbl.setFont(big)
-        kl.addWidget(QLabel("Local"))
-        kl.addWidget(self.local_lbl)
-        kl.addSpacing(30)
-        kl.addWidget(QLabel("UTC"))
-        kl.addWidget(self.utc_lbl)
-        kl.addStretch(1)
+        connections = QWidget()
+        settings_layout = QVBoxLayout(connections)
+        settings_layout.addWidget(conn_box)
+        settings_layout.addWidget(api_box)
+        settings_layout.addStretch()
 
-        # toolbar row
-        tb = QHBoxLayout()
-        def btn(text, slot, tip=""):
-            b = QPushButton(text)
-            b.clicked.connect(lambda *_, f=slot: f())
-            b.setToolTip(tip)
-            tb.addWidget(b)
-            return b
-        btn("Add row", self._add_row)
-        btn("Insert row", self._insert_row, "Insert above the selected row")
-        btn("Delete rows", self._delete_rows, "Delete the selected rows")
-        btn("▲", lambda: self._move(-1), "Move selected row up")
-        btn("▼", lambda: self._move(+1), "Move selected row down")
-        btn("Sort by day/time", self._sort)
-        tb.addSpacing(16)
-        btn("Run selected now", self._run_selected,
-            "Start the selected net now: SDR, fldigi, recording, and stop after its duration")
-        self.stop_btn = btn("Stop active net", self._stop_active,
-                            "Stop the recording and disconnect the SDR of the net running now")
-        btn("Refresh mode lists", self._refresh_lists,
-            "Re-read rig.get_modes and modem.get_names from fldigi")
-        tb.addStretch(1)
+        clocks = QHBoxLayout()
         self.sched_chk = QCheckBox("Scheduler enabled")
         self.sched_chk.setChecked(True)
         self.sched_chk.toggled.connect(self._on_sched_toggled)
-        tb.addWidget(self.sched_chk)
+        clocks.addWidget(self.sched_chk)
+        clocks.addStretch()
+        self.local_lbl = QLabel()
+        self.utc_lbl = QLabel()
+        for lbl in (self.local_lbl, self.utc_lbl):
+            lbl.setFont(fixed)
+            clocks.addWidget(lbl)
+
+        actions = QHBoxLayout()
+        add_btn = QPushButton("Add row")
+        add_btn.clicked.connect(self._add_row)
+        actions.addWidget(add_btn)
+        row_btn = QPushButton("Row actions")
+        row_menu = QMenu(row_btn)
+        self.insert_action = row_menu.addAction("Insert row above", self._insert_row)
+        self.delete_action = row_menu.addAction("Delete selected rows…", self._delete_rows)
+        row_menu.addSeparator()
+        self.up_action = row_menu.addAction("Move row up", lambda: self._move(-1))
+        self.down_action = row_menu.addAction("Move row down", lambda: self._move(1))
+        row_menu.addSeparator()
+        row_menu.addAction("Sort by UTC day and time", self._sort)
+        row_btn.setMenu(row_menu)
+        actions.addWidget(row_btn)
+        actions.addStretch()
+        self.run_btn = QPushButton("Run selected now")
+        self.run_btn.clicked.connect(self._run_selected)
+        actions.addWidget(self.run_btn)
+        self.selection_lbl = QLabel()
+        self.selection_lbl.setWordWrap(True)
+        self.selection_lbl.setTextFormat(Qt.TextFormat.PlainText)
 
         # grid
         self.table = QTableWidget(0, len(HEADERS))
@@ -421,7 +434,6 @@ class MainWindow(QMainWindow):
             self.table.horizontalHeaderItem(col).setToolTip(tip)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setItemDelegateForColumn(
             COL_TIME, RegexDelegate(r"^\d{0,2}:?\d{0,2}$", "HH:MM", self.table))
         self.table.setItemDelegateForColumn(
@@ -434,45 +446,49 @@ class MainWindow(QMainWindow):
             self.table.setColumnWidth(col, w)
         self.table.verticalHeader().setDefaultSectionSize(ROW_H)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.table.itemSelectionChanged.connect(self._update_row_actions)
         # room for VISIBLE_ROWS rows; more rows scroll
         h = (hh.sizeHint().height() + VISIBLE_ROWS * ROW_H + 2 * self.table.frameWidth()
              + self.table.horizontalScrollBar().sizeHint().height() + 4)
         self.table.setMinimumHeight(h)
-        self.table.setMaximumHeight(h)
 
         self.next_lbl = QLabel()
-        self.next_lbl.setFont(fixed)
+        self.next_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self.next_lbl.setWordWrap(True)
         self.active_lbl = QLabel()
-        self.active_lbl.setFont(fixed)
         self.active_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self.active_lbl.setWordWrap(True)
+        self.stop_btn = QPushButton("Stop active net")
+        self.stop_btn.clicked.connect(self._stop_active)
+        self.stop_btn.setToolTip("Stop the recording and disconnect the SDR of the active net")
+        active_bar = QHBoxLayout()
+        active_bar.addWidget(self.active_lbl, 1)
+        active_bar.addWidget(self.stop_btn)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(2000)
-        self.log_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.log_view.setFont(fixed)
 
-        top = QWidget()
-        tl = QVBoxLayout(top)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.addLayout(tb)
-        tl.addWidget(self.table)
-        tl.addWidget(self.next_lbl)
-        tl.addWidget(self.active_lbl)
-        split = QSplitter(Qt.Orientation.Vertical)
-        split.addWidget(top)
-        split.addWidget(self.log_view)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-        split.setChildrenCollapsible(False)
+        schedule = QWidget()
+        schedule_layout = QVBoxLayout(schedule)
+        schedule_layout.addLayout(actions)
+        schedule_layout.addWidget(self.table, 1)
+        schedule_layout.addWidget(self.selection_lbl)
+
+        tabs = QTabWidget()
+        tabs.addTab(schedule, "Schedule")
+        tabs.addTab(connections, "Connections")
+        tabs.addTab(self.log_view, "Activity")
 
         central = QWidget()
         v = QVBoxLayout(central)
-        v.addWidget(conn_box)
-        v.addWidget(api_box)
-        v.addWidget(clock_box)
-        v.addWidget(split, 1)
+        v.addLayout(clocks)
+        v.addWidget(self.next_lbl)
+        v.addLayout(active_bar)
+        v.addWidget(tabs, 1)
         self.setCentralWidget(central)
-        self.resize(1580, 840)
+        self.resize(1280, 650)
 
         # menu
         m = self.menuBar().addMenu("&File")
@@ -488,7 +504,18 @@ class MainWindow(QMainWindow):
             a.setShortcut(key)
             a.triggered.connect(lambda *_, f=slot: f())
             m.addAction(a)
+        help_menu = self.menuBar().addMenu("&Help")
+        about = help_menu.addAction(f"About {APP_NAME}")
+        about.setMenuRole(QAction.MenuRole.AboutRole)
+        about.triggered.connect(
+            lambda: QMessageBox.about(self, f"About {APP_NAME}", f"{APP_NAME} {VERSION}"))
+        self.fldigi_summary = QLabel("fldigi: checking…")
+        self.statusBar().addWidget(self.fldigi_summary)
+        self.remote_summary = QLabel("Remote: checking…")
+        self.remote_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.statusBar().addWidget(self.remote_summary)
         self.path_lbl = QLabel()
+        self.path_lbl.setTextFormat(Qt.TextFormat.PlainText)
         self.statusBar().addPermanentWidget(self.path_lbl)
 
     # ------------------------------------------------------------ rows
@@ -622,10 +649,35 @@ class MainWindow(QMainWindow):
         self._refresh_derived()
 
     def _selected_rows(self) -> list[int]:
-        rows = sorted({i.row() for i in self.table.selectedIndexes()})
-        if not rows and self.table.currentRow() >= 0:
-            rows = [self.table.currentRow()]
-        return rows
+        return sorted(index.row() for index in self.table.selectionModel().selectedRows())
+
+    def _update_row_actions(self):
+        if self._loading:
+            return
+        rows = self._selected_rows()
+        self.insert_action.setEnabled(bool(rows))
+        self.delete_action.setEnabled(bool(rows))
+        self.up_action.setEnabled(len(rows) == 1 and rows[0] > 0)
+        self.down_action.setEnabled(len(rows) == 1 and rows[0] < self.table.rowCount() - 1)
+
+        selected = [(r, self._get_row(r)) for r in rows]
+        selected = [(r, entry) for r, entry in selected if not entry.is_blank()]
+        if selected:
+            r, entry = selected[0]
+            problems = entry.problems(self.settings)
+            if problems:
+                message = f"Row {r + 1}: " + ", ".join(problems)
+            else:
+                message = f"Ready to run {entry.label(r)}"
+            if len(selected) > 1:
+                message += " (first selected net)"
+            can_run = not problems
+        else:
+            message = ("Select a net by its row number to run it now. "
+                       "Double-click a name, time, or frequency to edit it.")
+            can_run = False
+        self.run_btn.setEnabled(can_run)
+        self.selection_lbl.setText(message)
 
     def _new_row_at(self, r: int):
         self._loading = True
@@ -635,12 +687,13 @@ class MainWindow(QMainWindow):
         finally:
             self._loading = False
         self._refresh_derived()
-        self.table.selectRow(r)
+        self.table.setCurrentCell(r, COL_NAME)
+        self.table.setFocus()
+        self.table.editItem(self.table.item(r, COL_NAME))
         self._mark_dirty()
 
     def _add_row(self):
         self._new_row_at(self.table.rowCount())
-        self.table.scrollToBottom()
 
     def _insert_row(self):
         rows = self._selected_rows()
@@ -737,6 +790,7 @@ class MainWindow(QMainWindow):
                 dur_w.setToolTip("Required when SDR or Record is used" if dur_bad else "")
         finally:
             self._loading = False
+        self._update_row_actions()
 
     def _tuning_text(self, e: Entry) -> str:
         khz = core.parse_freq_khz(e.freq_khz)
@@ -792,8 +846,10 @@ class MainWindow(QMainWindow):
     def _on_clock(self):
         now_l = datetime.now().astimezone()
         now_u = now_l.astimezone(timezone.utc)
-        self.local_lbl.setText(now_l.strftime("%a %Y-%m-%d %H:%M:%S ") + (now_l.tzname() or ""))
-        self.utc_lbl.setText(now_u.strftime("%a %Y-%m-%d %H:%M:%S"))
+        self.local_lbl.setText(now_l.strftime("Local %a %H:%M:%S"))
+        self.local_lbl.setToolTip(now_l.strftime("%Y-%m-%d %Z"))
+        self.utc_lbl.setText(now_u.strftime("UTC %a %H:%M:%S"))
+        self.utc_lbl.setToolTip(now_u.strftime("%Y-%m-%d"))
         self._update_next_label(now_u)
         self._check_active(now_u)
 
@@ -928,6 +984,7 @@ class MainWindow(QMainWindow):
         self.host_edit.setText(host)
         self.log("info", f"Connecting to http://{host}:{self.port_spin.value()}/")
         self._connected = None
+        self.fldigi_summary.setText("fldigi: connecting…")
         self._poll(force=True)       # the mode lists are fetched once the poll succeeds
         self._mark_dirty()
 
@@ -961,12 +1018,15 @@ class MainWindow(QMainWindow):
             self.kiwi_lbl.setText(txt)
             if self._kiwi_ok is not True:
                 self.log("ok", f"Client API reachable (app {st.get('app_version') or '?'})")
+            state = "recording" if st.get("recording") else st["state"]
+            self.remote_summary.setText(f"Remote: {state}")
             self._kiwi_ok = True
         else:
             self.kiwi_lbl.setText(f"<span style='color:#888'>●</span> Remote API: "
                                   f"{html.escape(st.get('error', ''))}")
             if self._kiwi_ok is True:
                 self.log("warn", f"Client API not reachable: {st.get('error')}")
+            self.remote_summary.setText("Remote: unavailable")
             self._kiwi_ok = False
 
     def _on_status(self, st: dict):
@@ -980,12 +1040,14 @@ class MainWindow(QMainWindow):
             if self._connected is not True:
                 self.log("ok", f"Connected to fldigi {st['version']}")
                 self._refresh_lists()
+            self.fldigi_summary.setText("fldigi: connected")
             self._connected = True
         else:
             self.status_lbl.setText(
                 f"<span style='color:#c62828'>●</span> not connected: {html.escape(st['error'])}")
             if self._connected is not False:
                 self.log("error", f"fldigi not reachable: {st['error']}")
+            self.fldigi_summary.setText("fldigi: disconnected")
             self._connected = False
 
     def _on_lists(self, rig_modes: list, modems: list):
@@ -1073,7 +1135,8 @@ class MainWindow(QMainWindow):
             self.log("info", f"No schedule yet; it will be saved to {path}")
         self.config_path = path
         self._apply_document(doc)
-        self.path_lbl.setText(path)
+        self.path_lbl.setText(os.path.basename(path))
+        self.path_lbl.setToolTip(path)
 
     def _save(self, path: str) -> bool:
         try:
@@ -1098,7 +1161,8 @@ class MainWindow(QMainWindow):
                 path += ".json"
             if self._save(path):
                 self.config_path = path
-                self.path_lbl.setText(path)
+                self.path_lbl.setText(os.path.basename(path))
+                self.path_lbl.setToolTip(path)
 
     def _open(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open schedule", os.path.dirname(self.config_path),
@@ -1115,6 +1179,8 @@ class MainWindow(QMainWindow):
         text = html.escape(f"{ts}  {msg}")
         if color:
             text = f"<span style='color:{color}'>{text}</span>"
+        if level in ("warn", "error"):
+            self.statusBar().showMessage(msg, 8000)
         self.log_view.appendHtml(f"<pre style='margin:0'>{text}</pre>")
 
     def closeEvent(self, ev):
@@ -1132,10 +1198,13 @@ def default_config_path() -> str:
 def main():
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--config", help="schedule JSON file (default: per-user app config folder)")
+    ap.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     args, qt_args = ap.parse_known_args()
     app = QApplication([sys.argv[0]] + qt_args)
     app.setApplicationName(APP_ID)
     app.setApplicationDisplayName(APP_NAME)
+    app.setApplicationVersion(VERSION)
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "assets" / "scheduler.png")))
     w = MainWindow(os.path.abspath(args.config) if args.config else default_config_path())
     w.show()
     sys.exit(app.exec())

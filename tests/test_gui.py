@@ -186,3 +186,32 @@ def test_paused_scheduler_runs_nothing(window, fldigi, monkeypatch):
     w.tracker = core.MinuteTracker(MON_0100)
     w._on_minute()
     assert not w._starting and w.active is None
+
+
+def test_row_actions_follow_selection_and_validation(window):
+    w = window()
+    assert not w.run_btn.isEnabled()
+    assert not w.delete_action.isEnabled()
+
+    w.table.selectRow(0)
+    assert w.run_btn.isEnabled()
+    assert w.delete_action.isEnabled()
+    assert not w.up_action.isEnabled()
+    assert w.down_action.isEnabled()
+
+    start = w.table.item(0, gui.COL_TIME)
+    start.setText("")
+    assert not w.run_btn.isEnabled()
+    assert "start time must be HH:MM" in w.selection_lbl.text()
+
+    start.setText("0100")
+    assert w.run_btn.isEnabled()
+
+    w.table.clearSelection()
+    assert not w.run_btn.isEnabled()
+    assert not w.delete_action.isEnabled()
+
+    w._add_row()
+    assert w.table.currentRow() == len(NETS)
+    assert w.table.currentColumn() == gui.COL_NAME
+    assert not w.run_btn.isEnabled()
