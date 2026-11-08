@@ -61,14 +61,17 @@ the radio is up to you.
 
 ## Install and run
 
-### Single-file Windows and Linux builds
+### Download a build
 
-In GitHub Actions, open **Single-file builds**, select a successful run, and
-download the artifact for your platform. Extract the download and run
-`fldigi-net-scheduler.exe` on Windows. On Linux, make the extracted file
-executable with `chmod +x fldigi-net-scheduler` and run
-`./fldigi-net-scheduler`. The executable bundles Python and PySide6. Linux
-builds still use system libraries and target x86-64 Ubuntu 24.04.
+Open [GitHub Releases](https://github.com/jeffreycentex/fldigi-net-scheduler/releases)
+and choose the asset for your platform. Each build bundles Python and PySide6.
+
+- **Windows x64:** Run `fldigi-net-scheduler.exe`.
+- **Linux x64:** Run `chmod +x fldigi-net-scheduler` and then
+  `./fldigi-net-scheduler`. The build targets Ubuntu 24.04 and uses system libraries.
+- **macOS (Apple silicon):** Unzip `fldigi-net-scheduler-macos-arm64.zip` and
+  open **FLDigi Net Scheduler.app**. The bundle is ad-hoc signed and has no
+  Apple notarization.
 
 ### Run from source
 
@@ -101,9 +104,10 @@ you intend to support. See the [PyInstaller build notes](https://pyinstaller.org
 **Help › About** and `--version` report the value in
 [`app_version.py`](app_version.py). To prepare a versioned build, update
 `VERSION`, commit that change, and tag the commit with that exact version
-(for example, `0.10`). Push the tag to start the **Single-file builds**
-workflow, or run it manually from GitHub Actions. The workflow uploads
-versioned artifacts for Windows and Linux. The schedule JSON's
+(for example, `0.10`). Push the tag to start the **Build and publish**
+workflow. After all three platform builds pass, it attaches the binaries to
+that tag's GitHub release. To publish builds for an existing tag, run the
+workflow manually with that tag as `release_tag`. The schedule JSON's
 `schema_version` tracks file-format changes separately.
 
 ## The schedule grid
